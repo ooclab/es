@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/labstack/gommon/log"
+	"github.com/ooclab/es/etp"
 )
 
 type InnerSession struct {
@@ -27,10 +29,8 @@ func (session *InnerSession) HandleResponse(payload []byte) error {
 	return nil
 }
 
-func (session *InnerSession) Request(payload []byte) (respPayload []byte, err error) {
-	if len(payload) > int(LINK_FRAME_LENGTH_MAX) {
-		return nil, errors.New("request is too large")
-	}
+func (session *InnerSession) request(payload []byte) (respPayload []byte, err error) {
+	// TODO:
 
 	err = session.link.writeFrame(LINK_FRAME_TYPE_INNERSESSION_REQ, session.ID, payload)
 	if err != nil {
@@ -40,6 +40,20 @@ func (session *InnerSession) Request(payload []byte) (respPayload []byte, err er
 	// TODO: timeout
 	respPayload = <-session.response
 	return respPayload, nil
+}
+
+func (session *InnerSession) Post(url string, body []byte) (resp *etp.Response, err error) {
+	req, err := etp.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+
+	respPayload, err := session.request(req.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return etp.ReadResponse(respPayload)
 }
 
 type InnerSessionPool struct {
@@ -113,4 +127,40 @@ func (p *InnerSessionPool) Delete(session *InnerSession) error {
 	}
 	delete(p.pool, session.ID)
 	return nil
+}
+
+type innerSessionRequestHandler struct {
+	router *etp.Router
+	link   *Link
+}
+
+func newInnerSessionRequestHandler(link *Link) *innerSessionRequestHandler {
+	h := &innerSessionRequestHandler{
+		router: etp.NewRouter(),
+		link:   link,
+	}
+	h.router.AddRoutes([]etp.Route{
+		{"POST", "/echo", h.handleEcho},
+	})
+	return h
+}
+
+func (h *innerSessionRequestHandler) Handle(payload []byte) []byte {
+	w := etp.NewResponseWriter()
+	req, err := etp.ReadRequest(payload)
+	if err != nil {
+		w.WriteHeader(etp.StatusBadRequest)
+		log.Warn("bad request!")
+	} else {
+		err = h.router.Dispatch(w, req)
+		if err != nil {
+			log.Errorf("dispatch internal route (%s:%s) failed: %s\n", req.Method, req.RequestURI, err)
+		}
+	}
+
+	return w.Bytes()
+}
+
+func (h *innerSessionRequestHandler) handleEcho(w etp.ResponseWriter, r *etp.Request) {
+	w.Write(r.Body)
 }

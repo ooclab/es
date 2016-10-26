@@ -50,6 +50,11 @@ const (
 	LINK_FRAME_LENGTH_MAX    = uint32(16777216) // 16M
 )
 
+// LinkRequestHandler define request-response handler func
+type LinkRequestHandler interface {
+	Handle([]byte) []byte
+}
+
 type LinkConfig struct {
 }
 
@@ -96,12 +101,14 @@ type Link struct {
 
 	innerSessionPool *InnerSessionPool
 
+	requestHandler LinkRequestHandler
+
 	conn             io.ReadWriteCloser
 	connDisconnected chan bool
 }
 
 func NewLink(config *LinkConfig) *Link {
-	return &Link{
+	l := &Link{
 		tunnelPool:       map[uint32]*Tunnel{},
 		tunnelPoolMutex:  &sync.Mutex{},
 		curTunnelID:      1,
@@ -110,6 +117,8 @@ func NewLink(config *LinkConfig) *Link {
 
 		connDisconnected: make(chan bool, 1),
 	}
+	l.requestHandler = newInnerSessionRequestHandler(l)
+	return l
 }
 
 func (l *Link) readFrame() (*linkFrame, error) {
@@ -143,9 +152,12 @@ func (l *Link) readFrame() (*linkFrame, error) {
 
 func (l *Link) writeFrame(_type uint8, id uint32, payload []byte) error {
 	length := uint32(len(payload))
+
+	// TODO:
 	if length > LINK_FRAME_LENGTH_MAX {
 		return ErrMessageLengthTooLarge
 	}
+
 	hdrData := make([]byte, LINK_FRAME_HEADER_LENGTH)
 	hdrData[0] = LINK_FRAME_VERSION_DEFAULT
 	hdrData[1] = _type
@@ -240,10 +252,8 @@ func (l *Link) OpenInnerSession() (*InnerSession, error) {
 }
 
 func (l *Link) handleInnerSessionRequest(frame *linkFrame) error {
-	// logrus.Debugf("inner session : handle in : %s", string(frame.Payload))
-	// test: echo
-	// fmt.Println("got session request frame:", frame)
-	return l.writeFrame(LINK_FRAME_TYPE_INNERSESSION_REP, frame.ID, frame.Payload)
+	payload := l.requestHandler.Handle(frame.Payload)
+	return l.writeFrame(LINK_FRAME_TYPE_INNERSESSION_REP, frame.ID, payload)
 }
 
 func (l *Link) handleInnerSessionResponse(frame *linkFrame) error {
