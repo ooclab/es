@@ -6,6 +6,7 @@ import (
 	"github.com/Sirupsen/logrus"
 
 	"github.com/ooclab/es/common"
+	"github.com/ooclab/es/etp"
 	"github.com/ooclab/es/isession"
 	"github.com/ooclab/es/tunnel"
 )
@@ -16,8 +17,8 @@ type LinkConfig struct {
 type Link struct {
 	ID string // uuid ?
 
-	tunnelManager   *tunnel.Manager
 	isessionManager *isession.Manager
+	tunnelManager   *tunnel.Manager
 
 	outbound         chan *common.LinkOMSG
 	connDisconnected chan bool
@@ -27,8 +28,12 @@ func NewLink(config *LinkConfig) *Link {
 	l := &Link{
 		outbound: make(chan *common.LinkOMSG, 1),
 	}
-	l.tunnelManager = tunnel.NewManager(l.outbound)
-	l.isessionManager = isession.NewManager(l.outbound, l.tunnelManager)
+	l.isessionManager = isession.NewManager(l.outbound)
+	l.tunnelManager = tunnel.NewManager(l.outbound, l.isessionManager)
+	hdr := newRequestHandler([]etp.Route{
+		{"POST", "/tunnel", l.tunnelManager.HandleTunnelCreate},
+	})
+	l.isessionManager.SetRequestHandler(hdr)
 	return l
 }
 
@@ -111,10 +116,10 @@ func (l *Link) WaitDisconnected() error {
 	return nil
 }
 
-func (l *Link) OpenTunnel(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
-	return l.tunnelManager.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
-}
-
 func (l *Link) OpenInnerSession() (*isession.Session, error) {
 	return l.isessionManager.New()
+}
+
+func (l *Link) OpenTunnel(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
+	return l.tunnelManager.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
 }

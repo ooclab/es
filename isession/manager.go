@@ -6,24 +6,24 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/common"
 	"github.com/ooclab/es/emsg"
-	"github.com/ooclab/es/tunnel"
 )
 
 type Manager struct {
 	pool           *Pool
 	outbound       chan *common.LinkOMSG
-	requestHandler *requestHandler
-	tunnelManager  *tunnel.Manager
+	requestHandler RequestHandler
 }
 
-func NewManager(outbound chan *common.LinkOMSG, tm *tunnel.Manager) *Manager {
+func NewManager(outbound chan *common.LinkOMSG) *Manager {
 	m := &Manager{
-		pool:          newPool(),
-		outbound:      outbound,
-		tunnelManager: tm,
+		pool:     newPool(),
+		outbound: outbound,
 	}
-	m.requestHandler = newRequestHandler(tm)
 	return m
+}
+
+func (manager *Manager) SetRequestHandler(hdr RequestHandler) {
+	manager.requestHandler = hdr
 }
 
 func (manager *Manager) HandleIn(payload []byte) error {
