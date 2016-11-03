@@ -1,14 +1,17 @@
-package tunnel
+package channel
 
 import (
 	"errors"
+	"net"
 	"sync"
+
+	"github.com/ooclab/es/common"
 )
 
 type Pool struct {
 	curID     uint32
 	idMutex   *sync.Mutex
-	pool      map[uint32]*Tunnel
+	pool      map[uint32]*Channel
 	poolMutex *sync.Mutex
 }
 
@@ -16,7 +19,7 @@ func NewPool() *Pool {
 	return &Pool{
 		curID:     0,
 		idMutex:   &sync.Mutex{},
-		pool:      map[uint32]*Tunnel{},
+		pool:      map[uint32]*Channel{},
 		poolMutex: &sync.Mutex{},
 	}
 }
@@ -43,7 +46,7 @@ func (p *Pool) Exist(id uint32) bool {
 	return exist
 }
 
-func (p *Pool) Get(id uint32) *Tunnel {
+func (p *Pool) Get(id uint32) *Channel {
 	p.poolMutex.Lock()
 	v, exist := p.pool[id]
 	p.poolMutex.Unlock()
@@ -54,26 +57,28 @@ func (p *Pool) Get(id uint32) *Tunnel {
 	}
 }
 
-func (p *Pool) Delete(t *Tunnel) error {
+func (p *Pool) Delete(c *Channel) error {
 	p.poolMutex.Lock()
 	defer p.poolMutex.Unlock()
 
-	_, exist := p.pool[t.ID]
+	_, exist := p.pool[c.ChannelID]
 	if !exist {
-		return errors.New("delete failed: tunnel not exist")
+		return errors.New("delete failed: channel not exist")
 	}
-	delete(p.pool, t.ID)
+	delete(p.pool, c.ChannelID)
 	return nil
 }
 
-func (p *Pool) New(config *TunnelConfig) (*Tunnel, error) {
-	id := p.newID()
-
+func (p *Pool) New(tid uint32, outbound chan *common.LinkOMSG, conn net.Conn) *Channel {
+	cid := p.newID()
 	p.poolMutex.Lock()
-	defer p.poolMutex.Unlock()
-
-	t := newTunnel(id, config)
-	p.pool[id] = t
-
-	return t, nil
+	c := &Channel{
+		TunnelID:  tid,
+		ChannelID: cid,
+		Outbound:  outbound,
+		Conn:      conn,
+	}
+	p.pool[cid] = c
+	p.poolMutex.Unlock()
+	return c
 }

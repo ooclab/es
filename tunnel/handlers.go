@@ -16,9 +16,10 @@ func (manager *Manager) HandleTunnelCreate(w etp.ResponseWriter, r *etp.Request)
 		return
 	}
 
-	cfg.Reverse = !cfg.Reverse // FIXME!
+	logrus.Debug("handle got: ", cfg)
 
-	manager.TunnelCreate(cfg)
+	manager.tunnelCreate(cfg)
+
 	// fmt.Println("new tunnel ", tm)
 	etp.WriteJSON(w, etp.StatusOK, map[string]interface{}{
 		"tunnel_id": 123,
