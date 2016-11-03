@@ -85,5 +85,7 @@ func (t *ForwardTunnel) HandleChannelClose(m *tcommon.TMSG) error {
 		return errors.New("no such channel")
 	}
 
-	return t.cpool.Delete(c)
+	t.cpool.Delete(c)
+	c.Close()
+	return nil
 }
