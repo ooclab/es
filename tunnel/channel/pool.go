@@ -77,6 +77,7 @@ func (p *Pool) New(tid uint32, outbound chan *common.LinkOMSG, conn net.Conn) *C
 		ChannelID: cid,
 		Outbound:  outbound,
 		Conn:      conn,
+		lock:      &sync.Mutex{},
 	}
 	p.pool[cid] = c
 	p.poolMutex.Unlock()

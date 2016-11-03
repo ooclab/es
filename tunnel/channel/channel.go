@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Sirupsen/logrus"
@@ -22,6 +23,10 @@ type Channel struct {
 
 	recv uint64
 	send uint64
+
+	closed bool
+
+	lock *sync.Mutex
 }
 
 func (c *Channel) String() string {
@@ -29,12 +34,21 @@ func (c *Channel) String() string {
 }
 
 func (c *Channel) Close() {
+	if c.closed {
+		return
+	}
+
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.closed = true
 	closeConn(c.Conn)
+
 	logrus.Debugf("CLOSE channel %s: recv = %d, send = %d", c, atomic.LoadUint64(&c.recv), atomic.LoadUint64(&c.send))
 }
 
 func (c *Channel) HandleIn(m *tcommon.TMSG) error {
-	// TODO: use write cached !
+	// TODO: 1. use write cached !
+	// TODO: 2. use goroutine & channel to handle inbound message ?
 	wLen, err := c.Conn.Write(m.Payload)
 	if err != nil {
 		logrus.Errorf("channel write failed: %s", err)
@@ -49,14 +63,18 @@ func (c *Channel) Serve() error {
 	// logrus.Debugf("start serve channel %s", c)
 
 	// FIXME!
-	defer c.Close()
+	defer func() {
+		if !c.closed {
+			c.Close()
+		}
+	}()
 
 	// link.Outbound <- channel.conn.Read
 	for {
 		buf := make([]byte, 1024*64) // TODO: custom
 		reqLen, err := c.Conn.Read(buf)
 		if err != nil {
-			if util.TCPisClosedConnError(err) {
+			if c.closed || util.TCPisClosedConnError(err) {
 				logrus.Debugf("channel %s is closed normally, quit read", c)
 				return nil
 			}
@@ -77,7 +95,7 @@ func (c *Channel) Serve() error {
 			Type:    common.LinkMsgTypeTunnel,
 			Payload: m.Bytes(),
 		}
-		c.recv += uint64(reqLen)
+		atomic.AddUint64(&c.recv, uint64(reqLen))
 	}
 }
 
