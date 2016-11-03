@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/common"
+	"github.com/ooclab/es/util"
 
 	tcommon "github.com/ooclab/es/tunnel/common"
 )
@@ -20,8 +22,6 @@ type Channel struct {
 
 	recv uint64
 	send uint64
-
-	closed bool
 }
 
 func (c *Channel) String() string {
@@ -30,8 +30,7 @@ func (c *Channel) String() string {
 
 func (c *Channel) Close() {
 	closeConn(c.Conn)
-	c.closed = true
-	logrus.Debugf("CLOSE channel %s: recv = %d, send = %d", c, c.recv, c.send)
+	logrus.Debugf("CLOSE channel %s: recv = %d, send = %d", c, atomic.LoadUint64(&c.recv), atomic.LoadUint64(&c.send))
 }
 
 func (c *Channel) HandleIn(m *tcommon.TMSG) error {
@@ -42,7 +41,7 @@ func (c *Channel) HandleIn(m *tcommon.TMSG) error {
 		return errors.New("write payload error")
 	}
 
-	c.send += uint64(wLen)
+	atomic.AddUint64(&c.send, uint64(wLen))
 	return nil
 }
 
@@ -50,18 +49,14 @@ func (c *Channel) Serve() error {
 	// logrus.Debugf("start serve channel %s", c)
 
 	// FIXME!
-	defer func() {
-		if !c.closed {
-			c.Close()
-		}
-	}()
+	defer c.Close()
 
 	// link.Outbound <- channel.conn.Read
 	for {
 		buf := make([]byte, 1024*64) // TODO: custom
 		reqLen, err := c.Conn.Read(buf)
 		if err != nil {
-			if c.closed {
+			if util.TCPisClosedConnError(err) {
 				logrus.Debugf("channel %s is closed normally, quit read", c)
 				return nil
 			}
