@@ -61,7 +61,8 @@ func (t *ReverseTunnel) HandleIn(m *tcommon.TMSG) error {
 			return err
 		}
 
-		c = t.NewChannelByConn(conn)
+		// IMPORTANT! create channel by ID!
+		c = t.cpool.NewByID(m.ChannelID, t.id, t.outbound, conn)
 		go t.ServeChannel(c)
 		logrus.Debugf("OPEN channel %s success", c)
 	}
@@ -71,7 +72,9 @@ func (t *ReverseTunnel) HandleIn(m *tcommon.TMSG) error {
 }
 
 func (t *ReverseTunnel) NewChannelByConn(conn net.Conn) *channel.Channel {
-	return t.cpool.New(t.id, t.outbound, conn)
+	// this reserved for interface
+	logrus.Errorf("reverse tunnel can not create channel use random ID!")
+	return nil
 }
 
 func (t *ReverseTunnel) ServeChannel(c *channel.Channel) {
@@ -89,6 +92,7 @@ func (t *ReverseTunnel) closeRemoteChannel(cid uint32) {
 		TunnelID:  t.id,
 		ChannelID: cid,
 	}
+	logrus.Debugf("Before: notice remote endpoint to close channel %d", cid)
 	t.outbound <- &common.LinkOMSG{
 		Type:    common.LinkMsgTypeTunnel,
 		Payload: m.Bytes(),
@@ -99,7 +103,7 @@ func (t *ReverseTunnel) closeRemoteChannel(cid uint32) {
 func (t *ReverseTunnel) HandleChannelClose(m *tcommon.TMSG) error {
 	c := t.cpool.Get(m.ChannelID)
 	if c == nil {
-		logrus.Errorf("can not find channel %d:%d", m.TunnelID, m.ChannelID)
+		logrus.Warnf("can not find channel %d:%d", m.TunnelID, m.ChannelID)
 		return errors.New("no such channel")
 	}
 

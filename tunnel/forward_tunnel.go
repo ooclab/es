@@ -66,6 +66,7 @@ func (t *ForwardTunnel) ServeChannel(c *channel.Channel) {
 }
 
 func (t *ForwardTunnel) closeRemoteChannel(cid uint32) {
+	logrus.Debugf("prepare notice remote endpoint to close channel %d", cid)
 	m := &tcommon.TMSG{
 		Type:      tcommon.MsgTypeChannelClose,
 		TunnelID:  t.id,
@@ -75,13 +76,13 @@ func (t *ForwardTunnel) closeRemoteChannel(cid uint32) {
 		Type:    common.LinkMsgTypeTunnel,
 		Payload: m.Bytes(),
 	}
-	logrus.Debugf("notice remote endpoint to close channel %d", cid)
+	logrus.Debugf("notice remote endpoint to close channel %d done", cid)
 }
 
 func (t *ForwardTunnel) HandleChannelClose(m *tcommon.TMSG) error {
 	c := t.cpool.Get(m.ChannelID)
 	if c == nil {
-		logrus.Errorf("can not find channel %d:%d", m.TunnelID, m.ChannelID)
+		logrus.Warnf("can not find channel %d:%d", m.TunnelID, m.ChannelID)
 		return errors.New("no such channel")
 	}
 

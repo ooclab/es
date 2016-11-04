@@ -44,7 +44,6 @@ func (manager *Manager) HandleIn(payload []byte) error {
 			logrus.Warnf("can not find tunnel %d", m.TunnelID)
 			return errors.New("can not find tunnel")
 		}
-		logrus.Debugf("got tunnel %s, prepare to forward", t)
 		return t.HandleIn(m)
 
 	case tcommon.MsgTypeChannelClose:
@@ -53,7 +52,8 @@ func (manager *Manager) HandleIn(payload []byte) error {
 			logrus.Warnf("can not find tunnel %d", m.TunnelID)
 			return errors.New("no such tunnel")
 		}
-		return t.HandleChannelClose(m)
+		t.HandleChannelClose(m)
+		// return nil
 
 	default:
 		logrus.Errorf("unknown tunnel msg type: %d", m.Type)

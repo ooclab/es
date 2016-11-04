@@ -50,6 +50,10 @@ func (c *Channel) HandleIn(m *tcommon.TMSG) error {
 	// TODO: 1. use write cached !
 	// TODO: 2. use goroutine & channel to handle inbound message ?
 	wLen, err := c.Conn.Write(m.Payload)
+	// FIXME: make sure write all data, BUT it seems that golang do it already!
+	if wLen != len(m.Payload) {
+		logrus.Errorf("Channel c.Conn.Write error: wLen = %d != len(m.Payload) = %d", wLen, len(m.Payload))
+	}
 	if err != nil {
 		logrus.Errorf("channel write failed: %s", err)
 		return errors.New("write payload error")

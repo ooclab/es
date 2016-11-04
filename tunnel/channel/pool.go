@@ -71,6 +71,10 @@ func (p *Pool) Delete(c *Channel) error {
 
 func (p *Pool) New(tid uint32, outbound chan *common.LinkOMSG, conn net.Conn) *Channel {
 	cid := p.newID()
+	return p.NewByID(cid, tid, outbound, conn)
+}
+
+func (p *Pool) NewByID(cid uint32, tid uint32, outbound chan *common.LinkOMSG, conn net.Conn) *Channel {
 	p.poolMutex.Lock()
 	c := &Channel{
 		TunnelID:  tid,
