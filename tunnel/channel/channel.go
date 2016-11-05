@@ -16,13 +16,15 @@ import (
 )
 
 type Channel struct {
+	// !IMPORTANT! atomic.AddInt64 in arm / x86_32
+	// https://plus.ooclab.com/note/article/1285
+	recv uint64
+	send uint64
+
 	TunnelID  uint32
 	ChannelID uint32
 	Outbound  chan *common.LinkOMSG
 	Conn      net.Conn
-
-	recv uint64
-	send uint64
 
 	closed bool
 

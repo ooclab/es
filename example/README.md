@@ -11,8 +11,8 @@ cd $GOPATH/src/github.com/ooclab/es/example
 build:
 
 ```
-go build -v -race server.go
-go build -v -race client.go
+go build -v server.go
+go build -v client.go
 ```
 
 run server:
