@@ -36,12 +36,13 @@ func (c *Channel) String() string {
 }
 
 func (c *Channel) Close() {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	if c.closed {
 		return
 	}
 
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	c.closed = true
 	closeConn(c.Conn)
 
@@ -77,7 +78,8 @@ func (c *Channel) Serve() error {
 
 	// link.Outbound <- channel.conn.Read
 	for {
-		buf := make([]byte, 1024*64) // TODO: custom
+		// IMPORTANT: buf read size is very important for speed!
+		buf := make([]byte, 1024*16) // TODO: custom
 		reqLen, err := c.Conn.Read(buf)
 		if err != nil {
 			if c.closed || util.TCPisClosedConnError(err) {
