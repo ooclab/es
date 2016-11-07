@@ -19,16 +19,16 @@ func newConn(conn io.ReadWriteCloser) *Conn {
 }
 
 func (c *Conn) Recv() (*linkMSG, error) {
-	hdrData, err := c.mustRead(linkMSGHeaderLength)
+	hdr, err := c.mustRead(4)
 	if err != nil {
 		return nil, err
 	}
 
+	i := binary.LittleEndian.Uint32(hdr)
+
 	msg := &linkMSG{
-		Version: hdrData[0],
-		Type:    hdrData[1],
-		Flag:    binary.LittleEndian.Uint16(hdrData[2:4]),
-		Length:  binary.LittleEndian.Uint32(hdrData[4:8]),
+		Type:   uint8(i >> 24),
+		Length: i & 0xffffff,
 	}
 
 	if msg.Length > linkMSGLengthMax {

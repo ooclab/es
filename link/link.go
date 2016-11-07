@@ -89,9 +89,7 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 		for {
 			omsg := <-l.outbound
 			m := &linkMSG{
-				Version: common.DefaultLinkMSGVersion,
 				Type:    omsg.Type,
-				Flag:    common.DefaultLinkMSGFlag,
 				Payload: omsg.Payload,
 			}
 
