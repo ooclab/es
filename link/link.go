@@ -98,6 +98,9 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 				break
 			}
 		}
+		// TODO: quit !
+		logrus.Debug("close conn: %s", conn)
+		conn.Close()
 	}()
 
 	return nil
