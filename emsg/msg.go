@@ -11,6 +11,11 @@ const (
 	eMSGLengthMin int = 5
 )
 
+const (
+	MSG_TYPE_REQ = 1
+	MSG_TYPE_REP = 2
+)
+
 var (
 	ErrMessageDataTooShort = errors.New("message data is too short")
 )
