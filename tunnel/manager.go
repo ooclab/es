@@ -138,7 +138,7 @@ func (manager *Manager) OpenTunnel(localHost string, localPort int, remoteHost s
 		return err
 	}
 
-	fmt.Println("respBody: ", respBody)
+	// fmt.Println("respBody: ", respBody)
 	if respBody.Error != "" {
 		logrus.Errorf("open tunnel in the remote endpoint failed: %+v", respBody)
 		return errors.New("open tunnel in the remote endpoint failed")
@@ -180,6 +180,8 @@ func (manager *Manager) listenTCP(host string, port int) (net.Listener, error) {
 		return nil, err
 	}
 
+	// save listen
+	manager.lpool.Add(host, port, l)
 	return l, nil
 }
 
@@ -197,7 +199,7 @@ func (manager *Manager) runListenTunnel(t Tunneler) error {
 	logrus.Debugf("start listen tunnel %s success", t)
 
 	go func() {
-		defer l.Close()
+		// defer l.Close()
 		for {
 			conn, err := l.Accept()
 			if err != nil {
@@ -216,5 +218,15 @@ func (manager *Manager) runListenTunnel(t Tunneler) error {
 		}
 	}()
 
+	return nil
+}
+
+func (manager *Manager) Close() error {
+	for item := range manager.lpool.IterBuffered() {
+		fmt.Println("item = ", item)
+		item.Val.Close()
+		logrus.Debugf("close listen %s", item.Key)
+		manager.lpool.Delete(item.Key)
+	}
 	return nil
 }

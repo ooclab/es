@@ -105,6 +105,7 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 
 func (l *Link) Close() error {
 	logrus.Warn("l.Close() is not completed!")
+	l.tunnelManager.Close()
 	return nil
 }
 
