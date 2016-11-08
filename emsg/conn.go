@@ -3,14 +3,15 @@ package emsg
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"net"
 )
 
 type Conn struct {
-	conn net.Conn
+	conn io.ReadWriteCloser
 }
 
-func NewConn(conn net.Conn) *Conn {
+func NewConn(conn io.ReadWriteCloser) *Conn {
 	return &Conn{
 		conn: conn,
 	}
@@ -66,14 +67,6 @@ func (c *Conn) CloseWrite() {
 	if conn, ok := c.conn.(*net.TCPConn); ok {
 		conn.CloseWrite()
 	}
-}
-
-func (c *Conn) RemoteAddr() net.Addr {
-	return c.conn.RemoteAddr()
-}
-
-func (c *Conn) LocalAddr() net.Addr {
-	return c.conn.LocalAddr()
 }
 
 func (c *Conn) mustRecv(dlen uint32) ([]byte, error) {
