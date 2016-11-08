@@ -4,8 +4,10 @@ import "fmt"
 
 // msg type
 const (
-	LinkMsgTypeInnerSession = 1
-	LinkMsgTypeTunnel       = 2
+	LinkMsgTypeInnerSession      = 1
+	LinkMsgTypeTunnel            = 2
+	LinkMsgTypeHeartbeatRequest  = 3
+	LinkMsgTypeHeartbeatResponse = 4
 )
 
 const (
