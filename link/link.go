@@ -49,8 +49,9 @@ type Link struct {
 func NewLink(config *LinkConfig) *Link {
 	l := &Link{
 		outbound:           make(chan *common.LinkOMSG, 1),
-		heartbeatInterval:  3,
-		offlineDetectRelay: 15,
+		heartbeatInterval:  15,
+		offlineDetectRelay: 60,
+		lastRecvTimeMutex:  &sync.Mutex{},
 		quit:               make(chan bool, 1),
 	}
 	l.isessionManager = isession.NewManager(l.outbound)
@@ -73,7 +74,7 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 	go func() {
 		for {
 			select {
-			case <-time.After(time.Second * 30):
+			case <-time.After(time.Second * 3):
 
 				unfresh := l.unfreshRecvTime()
 				// fmt.Println("-- ", time.Now(), l.lastRecvTime, l.offline, unfresh, l.offlineDetectRelay)
@@ -197,14 +198,14 @@ func (l *Link) OpenTunnel(localHost string, localPort int, remoteHost string, re
 }
 
 func (l *Link) updateLastRecvTime() {
-	// l.lastRecvTimeMutex.Lock()
-	// defer l.lastRecvTimeMutex.Unlock()
+	l.lastRecvTimeMutex.Lock()
+	defer l.lastRecvTimeMutex.Unlock()
 	l.lastRecvTime = time.Now()
 }
 
 func (l *Link) unfreshRecvTime() float64 {
-	// l.lastRecvTimeMutex.Lock()
-	// defer l.lastRecvTimeMutex.Unlock()
+	l.lastRecvTimeMutex.Lock()
+	defer l.lastRecvTimeMutex.Unlock()
 	return time.Since(l.lastRecvTime).Seconds()
 }
 
