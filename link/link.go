@@ -73,7 +73,7 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 	go func() {
 		for {
 			select {
-			case <-time.After(time.Second * 3):
+			case <-time.After(time.Second * 30):
 
 				unfresh := l.unfreshRecvTime()
 				// fmt.Println("-- ", time.Now(), l.lastRecvTime, l.offline, unfresh, l.offlineDetectRelay)
