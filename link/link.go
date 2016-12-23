@@ -60,6 +60,7 @@ func NewLink(config *LinkConfig) *Link {
 		heartbeatInterval:  15,
 		offlineDetectRelay: 60,
 		lastRecvTimeMutex:  &sync.Mutex{},
+		lastRecvTime:       time.Now(), // FIXME: init time to prevent SetOffline triggered when program started
 		quit:               make(chan bool, 1),
 	}
 	l.isessionManager = isession.NewManager(l.outbound)
