@@ -14,6 +14,12 @@ import (
 	"github.com/satori/go.uuid"
 )
 
+var (
+	// ErrEventChannelIsFull the event channel is full
+	ErrEventChannelIsFull = errors.New("event channel is full")
+)
+
+// LinkEvent the event struct of link
 type LinkEvent struct {
 	Link    *Link
 	Name    string
@@ -21,9 +27,11 @@ type LinkEvent struct {
 	Created time.Time
 }
 
+// LinkConfig reserved for config
 type LinkConfig struct {
 }
 
+// Link master connection between two point
 type Link struct {
 	ID string // uuid ?
 
@@ -215,13 +223,15 @@ func (l *Link) SetOffline() {
 	l.offline = true
 	l.offlineTime = now
 
-	event := &LinkEvent{
-		Link:    l,
-		Name:    "offline",
-		Data:    map[string]string{},
-		Created: now,
+	if l.Event != nil {
+		event := &LinkEvent{
+			Link:    l,
+			Name:    "offline",
+			Data:    map[string]string{},
+			Created: now,
+		}
+		l.syncSendEvent(event)
 	}
-	l.syncSendEvent(event)
 }
 
 func (l *Link) SetOnline() {
@@ -229,13 +239,15 @@ func (l *Link) SetOnline() {
 	now := time.Now()
 	l.offline = false
 
-	event := &LinkEvent{
-		Link:    l,
-		Name:    "online",
-		Data:    map[string]string{},
-		Created: now,
+	if l.Event != nil {
+		event := &LinkEvent{
+			Link:    l,
+			Name:    "online",
+			Data:    map[string]string{},
+			Created: now,
+		}
+		l.syncSendEvent(event)
 	}
-	l.syncSendEvent(event)
 }
 
 // IsOffline check link status
@@ -285,12 +297,15 @@ func (l *Link) syncSend(m *common.LinkOMSG) error {
 }
 
 func (l *Link) syncSendEvent(event *LinkEvent) error {
+	if l.Event == nil {
+		return nil
+	}
 	select {
 	case l.Event <- event: // Put event in the channel unless it is full
 		return nil
 	default:
-		logrus.Warn("l.Event Channel full. Discarding value")
-		return errors.New("outbound channel is full")
+		logrus.Debug("l.Event Channel full. Discarding value")
+		return ErrEventChannelIsFull
 	}
 }
 
