@@ -24,7 +24,7 @@ import (
 func startServer() (port int, err error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		fmt.Println("listen error:", err)
+		logrus.Error("listen error:", err)
 		return 0, err
 	}
 
@@ -35,7 +35,7 @@ func startServer() (port int, err error) {
 		for {
 			conn, err := l.Accept()
 			if err != nil {
-				fmt.Println("accept new conn error: ", err)
+				logrus.Error("accept new conn error: ", err)
 				continue // TODO: fix me!
 			}
 
@@ -50,16 +50,16 @@ func startServer() (port int, err error) {
 	return port, nil
 }
 
-func tcp_connect(addr_s string) (conn net.Conn, err error) {
+func tcpConnect(addrS string) (conn net.Conn, err error) {
 	// fmt.Printf("try connect to relay server: %s\n", addr_s)
-	addr, err := net.ResolveTCPAddr("tcp", addr_s)
+	addr, err := net.ResolveTCPAddr("tcp", addrS)
 	if err != nil {
-		fmt.Println("resolve relay-server (%s) failed: %s", addr, err)
+		fmt.Printf("resolve relay-server (%s) failed: %s", addr, err)
 		return
 	}
 	conn, err = net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		fmt.Println("dial %s failed: %s", addr, err.Error())
+		logrus.Errorf("dial %s failed: %s", addr, err.Error())
 		return
 	}
 	// fmt.Printf("connect to relay server %s success\n", conn.RemoteAddr())
@@ -68,7 +68,7 @@ func tcp_connect(addr_s string) (conn net.Conn, err error) {
 }
 
 func connectServer(addr string) *link.Link {
-	conn, err := tcp_connect(addr)
+	conn, err := tcpConnect(addr)
 	if err != nil {
 		panic(err)
 	}
