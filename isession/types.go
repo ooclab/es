@@ -7,6 +7,7 @@ import (
 const (
 	MsgTypeRequest  uint8 = 1
 	MsgTypeResponse uint8 = 2
+	MsgTypeClose    uint8 = 3 // TODO: for close session
 )
 
 // RequestHandler define request-response handler func

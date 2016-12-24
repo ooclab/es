@@ -2,6 +2,7 @@ package isession
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/common"
@@ -60,6 +61,15 @@ func (manager *Manager) HandleIn(payload []byte) error {
 
 func (manager *Manager) New() (*Session, error) {
 	return manager.pool.New(manager.outbound)
+}
+
+func (manager *Manager) Close() {
+	for item := range manager.pool.IterBuffered() {
+		fmt.Println("item = ", item)
+		item.Val.Close()
+		logrus.Debugf("close session %s", item.Key)
+		manager.pool.Delete(item.Val)
+	}
 }
 
 // func (l *Link) openInnerSession() (*InnerSession, error) {

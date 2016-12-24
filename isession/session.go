@@ -20,6 +20,10 @@ func newSession(id uint32, outbound chan *common.LinkOMSG) *Session {
 	}
 }
 
+func (session *Session) Close() {
+	close(session.inbound)
+}
+
 func (session *Session) HandleResponse(payload []byte) error {
 	// logrus.Debugf("inner session : got response : %s", string(payload))
 	session.inbound <- payload

@@ -79,3 +79,30 @@ func (p *Pool) Delete(session *Session) error {
 	delete(p.pool, session.ID)
 	return nil
 }
+
+// Used by the Iter & IterBuffered functions to wrap two variables together over a channel,
+type PoolTuple struct {
+	Key uint32
+	Val *Session
+}
+
+// Returns a buffered iterator which could be used in a for range loop.
+func (p *Pool) IterBuffered() <-chan PoolTuple {
+	ch := make(chan PoolTuple, len(p.pool))
+	go func() {
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		go func() {
+			// Foreach key, value pair.
+			p.poolMutex.Lock()
+			defer p.poolMutex.Unlock()
+			for key, val := range p.pool {
+				ch <- PoolTuple{key, val}
+			}
+			wg.Done()
+		}()
+		wg.Wait()
+		close(ch)
+	}()
+	return ch
+}

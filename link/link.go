@@ -116,8 +116,9 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 
 	go func() {
 		// TODO:
-		defer conn.Close()
-		defer close(l.connDisconnected)
+		defer safeRun(func() { conn.Close() })
+		defer closeBoolChan(l.connDisconnected)
+		defer closeBoolChan(l.quit)
 
 		logrus.Debug("start handler for link messgae recv")
 		for {
@@ -126,6 +127,11 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 				if err == io.EOF {
 					logrus.Debug("conn is closed")
 					break
+				}
+
+				if err == ErrMessageLengthTooLarge {
+					logrus.Warnf("link %s got a large message, CLOSE IT.", l.ID)
+					// TODO: notice remote endpoint!
 				}
 
 				// TODO
@@ -161,34 +167,55 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 				break
 			}
 		}
-		logrus.Debug("HandleIn is stoped")
+		logrus.Debugf("link %s: HandleIn is stoped", l.ID)
 	}()
 
 	go func() {
-		logrus.Debug("start handler for link messgae send")
+		var omsg *common.LinkOMSG
 		for {
-			omsg := <-l.outbound
+			select {
+			case omsg = <-l.outbound:
+				if omsg == nil {
+					logrus.Errorf("link %s: l.outbound is closed", l.ID)
+					closeBoolChan(l.quit)
+					return
+				}
+			case <-l.quit:
+				logrus.Debugf("link %s: got l.quit event,  quit recv l.outbound", l.ID)
+				return
+			}
 			m := &linkMSG{
 				Type:    omsg.Type,
 				Payload: omsg.Payload,
 			}
 
 			if err := c.Send(m); err != nil {
-				logrus.Errorf("send message to link conn failed: %s", err)
-				break
+				logrus.Errorf("link %s: send message to conn failed: %s", l.ID, err)
+				safeRun(func() { conn.Close() })
+				closeBoolChan(l.connDisconnected)
+				closeBoolChan(l.quit)
+				return
 			}
 		}
-		// TODO: quit !
-		closeBoolChan(l.quit)
 	}()
 
 	return nil
 }
 
+func (l *Link) closeOutbound() {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.Warn("closeOutbound recovered: ", r)
+		}
+	}()
+	close(l.outbound)
+}
+
 func (l *Link) Close() error {
-	logrus.Warn("l.Close() is not completed!")
 	closeBoolChan(l.quit)
+	l.closeOutbound()
 	l.tunnelManager.Close()
+	l.isessionManager.Close()
 	return nil
 }
 
@@ -310,11 +337,17 @@ func (l *Link) syncSendEvent(event *LinkEvent) error {
 	}
 }
 
-func closeBoolChan(b chan bool) {
+func safeRun(f func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			logrus.Warn("closeBoolChan recovered: ", r)
+			logrus.Warn("safeRun recovered: ", r)
 		}
 	}()
-	close(b)
+	f()
+}
+
+func closeBoolChan(b chan bool) {
+	safeRun(func() {
+		close(b)
+	})
 }
