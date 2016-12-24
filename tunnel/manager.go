@@ -112,14 +112,7 @@ func (manager *Manager) OpenTunnel(localHost string, localPort int, remoteHost s
 		Reverse:    reverse,
 	}
 
-	remoteCfg := &TunnelConfig{
-		LocalHost:  remoteHost,
-		LocalPort:  remotePort,
-		RemoteHost: localHost,
-		RemotePort: localPort,
-		Reverse:    !reverse,
-	}
-	body, _ := json.Marshal(remoteCfg)
+	body, _ := json.Marshal(cfg.RemoteConfig())
 	session, err := manager.isessionManager.New()
 	if err != nil {
 		logrus.Errorf("open isession failed: %s", err)

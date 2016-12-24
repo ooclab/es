@@ -16,6 +16,16 @@ type TunnelConfig struct {
 	Reverse    bool
 }
 
+func (c *TunnelConfig) RemoteConfig() *TunnelConfig {
+	return &TunnelConfig{
+		LocalHost:  c.RemoteHost,
+		LocalPort:  c.RemotePort,
+		RemoteHost: c.LocalHost,
+		RemotePort: c.LocalPort,
+		Reverse:    !c.Reverse,
+	}
+}
+
 type Tunneler interface {
 	ID() uint32
 	Config() *TunnelConfig
