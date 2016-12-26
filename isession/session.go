@@ -31,7 +31,7 @@ func (session *Session) HandleResponse(payload []byte) error {
 	return nil
 }
 
-func (session *Session) SendAndWait(payload []byte) (respPayload []byte, err error) {
+func (session *Session) sendAndWait(payload []byte) (respPayload []byte, err error) {
 	// TODO:
 
 	m := &emsg.EMSG{
@@ -50,12 +50,26 @@ func (session *Session) SendAndWait(payload []byte) (respPayload []byte, err err
 	return respPayload, nil
 }
 
+func (session *Session) SendAndWait(r *Request) (resp *Response, err error) {
+	reqData, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	respData, err := session.sendAndWait(reqData)
+	if err != nil {
+		return
+	}
+	resp = &Response{}
+	err = json.Unmarshal(respData, &resp)
+	return
+}
+
 func (session *Session) SendJSONAndWait(request interface{}, response interface{}) error {
 	reqData, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	respData, err := session.SendAndWait(reqData)
+	respData, err := session.sendAndWait(reqData)
 	if err != nil {
 		return err
 	}

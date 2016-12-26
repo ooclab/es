@@ -113,7 +113,7 @@ func Benchmark_LinkInnerSessionSingle(b *testing.B) {
 
 	s, _ := l.OpenInnerSession()
 	for i := 0; i < b.N; i++ { //use b.N for looping
-		s.Post("/echo", []byte("Ping"))
+		s.SendAndWait(&isession.Request{Action: "/echo", Body: []byte("Ping")})
 	}
 }
 
@@ -123,7 +123,7 @@ func Benchmark_LinkInnerSessionMulti(b *testing.B) {
 
 	for i := 0; i < b.N; i++ { //use b.N for looping
 		s, _ := l.OpenInnerSession()
-		s.Post("/echo", []byte("Ping"))
+		s.SendAndWait(&isession.Request{Action: "/echo", Body: []byte("Ping")})
 	}
 }
 
@@ -164,7 +164,7 @@ func testLinkInnerSession(s *isession.Session, length int) bool {
 		return false
 	}
 
-	resp, err := s.Post("/echo", b)
+	resp, err := s.SendAndWait(&isession.Request{Action: "/echo", Body: b})
 	if err != nil {
 		logrus.Error("request failed:", resp, err, length)
 		return false

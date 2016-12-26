@@ -16,6 +16,9 @@ func newRequestHandler(routes []isession.Route) *requestHandler {
 	h := &requestHandler{
 		router: isession.NewRouter(),
 	}
+	h.router.AddRoutes([]isession.Route{
+		{"/echo", h.echo},
+	})
 	h.router.AddRoutes(routes)
 	return h
 }
