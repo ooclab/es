@@ -5,14 +5,14 @@ import (
 
 	"github.com/Sirupsen/logrus"
 
-	"github.com/ooclab/es/etp"
+	"github.com/ooclab/es/isession"
 )
 
-func (manager *Manager) HandleTunnelCreate(w etp.ResponseWriter, r *etp.Request) {
+func (manager *Manager) HandleTunnelCreate(r *isession.Request) (resp *isession.Response, err error) {
 	cfg := &TunnelConfig{}
-	if err := json.Unmarshal(r.Body, &cfg); err != nil {
+	if err = json.Unmarshal(r.Body, &cfg); err != nil {
 		logrus.Errorf("tunnel create: unmarshal tunnel config failed: %s", err)
-		etp.WriteJSON(w, etp.StatusExpectationFailed, map[string]string{"error": "load-tunnel-map-error"})
+		resp.Status = "load-tunnel-map-error"
 		return
 	}
 
@@ -21,7 +21,12 @@ func (manager *Manager) HandleTunnelCreate(w etp.ResponseWriter, r *etp.Request)
 	manager.tunnelCreate(cfg)
 
 	// fmt.Println("new tunnel ", tm)
-	etp.WriteJSON(w, etp.StatusOK, map[string]interface{}{
+	body, _ := json.Marshal(map[string]interface{}{
 		"tunnel_id": 123,
 	})
+	resp = &isession.Response{
+		Status: "success",
+		Body:   body,
+	}
+	return
 }

@@ -119,15 +119,13 @@ func (manager *Manager) OpenTunnel(localHost string, localPort int, remoteHost s
 		return err
 	}
 
-	resp, err := session.Post("/tunnel", body)
+	respBody := responseTunnelCreate{}
+	err = session.SendJSONAndWait(map[string]interface{}{
+		"action": "/tunnel",
+		"body":   body,
+	}, &respBody)
 	if err != nil {
 		logrus.Errorf("send request to remote endpoint failed: %s", err)
-		return err
-	}
-
-	respBody := responseTunnelCreate{}
-	if err = json.Unmarshal(resp.Body, &respBody); err != nil {
-		logrus.Errorf("unmarshal tunnel create response failed: %s", err)
 		return err
 	}
 

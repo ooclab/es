@@ -1,9 +1,10 @@
 package isession
 
 import (
+	"encoding/json"
+
 	"github.com/ooclab/es/common"
 	"github.com/ooclab/es/emsg"
-	"github.com/ooclab/es/etp"
 )
 
 type Session struct {
@@ -30,7 +31,7 @@ func (session *Session) HandleResponse(payload []byte) error {
 	return nil
 }
 
-func (session *Session) request(payload []byte) (respPayload []byte, err error) {
+func (session *Session) SendAndWait(payload []byte) (respPayload []byte, err error) {
 	// TODO:
 
 	m := &emsg.EMSG{
@@ -49,16 +50,14 @@ func (session *Session) request(payload []byte) (respPayload []byte, err error) 
 	return respPayload, nil
 }
 
-func (session *Session) Post(url string, body []byte) (resp *etp.Response, err error) {
-	req, err := etp.NewRequest("POST", url, body)
+func (session *Session) SendJSONAndWait(request interface{}, response interface{}) error {
+	reqData, err := json.Marshal(request)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	respPayload, err := session.request(req.Bytes())
+	respData, err := session.SendAndWait(reqData)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	return etp.ReadResponse(respPayload)
+	return json.Unmarshal(respData, &response)
 }

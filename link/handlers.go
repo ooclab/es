@@ -1,48 +1,54 @@
 package link
 
 import (
+	"encoding/json"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/emsg"
-	"github.com/ooclab/es/etp"
 	"github.com/ooclab/es/isession"
 )
 
 type requestHandler struct {
-	router *etp.Router
+	router *isession.Router
 }
 
-func newRequestHandler(routes []etp.Route) *requestHandler {
+func newRequestHandler(routes []isession.Route) *requestHandler {
 	h := &requestHandler{
-		router: etp.NewRouter(),
+		router: isession.NewRouter(),
 	}
-	h.router.AddRoutes([]etp.Route{
-		{"POST", "/echo", h.echo},
-		// {"POST", "/tunnel", h.tunnelCreate},
-	})
 	h.router.AddRoutes(routes)
 	return h
 }
 
 func (h *requestHandler) Handle(m *emsg.EMSG) *emsg.EMSG {
-	w := etp.NewResponseWriter()
-	req, err := etp.ReadRequest(m.Payload)
-	if err != nil {
-		w.WriteHeader(etp.StatusBadRequest)
-		logrus.Warn("bad request!")
+	var resp *isession.Response
+	var err error
+
+	req := &isession.Request{}
+	if err = json.Unmarshal(m.Payload, &req); err != nil {
+		logrus.Errorf("json unmarshal isession request failed: %s", err)
+		resp = &isession.Response{Status: "json-unmarshal-request-error"}
 	} else {
-		err = h.router.Dispatch(w, req)
+		resp, err = h.router.Dispatch(req)
 		if err != nil {
-			logrus.Errorf("%s %s: %s", req.Method, req.RequestURI, err)
+			logrus.Errorf("dispatch request failed: %s", err)
+			resp = &isession.Response{Status: "dispatch-request-error"}
 		}
+	}
+
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		logrus.Errorf("json marshal response failed: %s", err)
+		resp = &isession.Response{Status: "json-marshal-response-error"}
 	}
 
 	return &emsg.EMSG{
 		Type:    isession.MsgTypeResponse,
 		ID:      m.ID,
-		Payload: w.Bytes(),
+		Payload: payload,
 	}
 }
 
-func (h *requestHandler) echo(w etp.ResponseWriter, r *etp.Request) {
-	w.Write(r.Body)
+func (h *requestHandler) echo(req *isession.Request) (*isession.Response, error) {
+	return &isession.Response{Status: "success", Body: req.Body}, nil
 }

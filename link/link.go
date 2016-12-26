@@ -8,7 +8,6 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/common"
-	"github.com/ooclab/es/etp"
 	"github.com/ooclab/es/isession"
 	"github.com/ooclab/es/tunnel"
 	"github.com/satori/go.uuid"
@@ -55,6 +54,14 @@ type Link struct {
 }
 
 func NewLink(config *LinkConfig) *Link {
+	return newLink(config, nil)
+}
+
+func NewLinkCustom(config *LinkConfig, hdr isession.RequestHandler) *Link {
+	return newLink(config, hdr)
+}
+
+func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
 	l := &Link{
 		outbound:           make(chan *common.LinkOMSG, 1),
 		heartbeatInterval:  15,
@@ -65,9 +72,11 @@ func NewLink(config *LinkConfig) *Link {
 	}
 	l.isessionManager = isession.NewManager(l.outbound)
 	l.tunnelManager = tunnel.NewManager(l.outbound, l.isessionManager)
-	hdr := newRequestHandler([]etp.Route{
-		{"POST", "/tunnel", l.tunnelManager.HandleTunnelCreate},
-	})
+	if hdr == nil {
+		hdr = newRequestHandler([]isession.Route{
+			{"/tunnel", l.tunnelManager.HandleTunnelCreate},
+		})
+	}
 	l.isessionManager.SetRequestHandler(hdr)
 	return l
 }
@@ -120,7 +129,7 @@ func (l *Link) Bind(conn io.ReadWriteCloser) error {
 		defer closeBoolChan(l.connDisconnected)
 		defer closeBoolChan(l.quit)
 
-		logrus.Debug("start handler for link messgae recv")
+		logrus.Debug("start handler for link message recv")
 		for {
 			m, err := c.Recv()
 			if err != nil {
