@@ -2,7 +2,6 @@ package isession
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/common"
@@ -15,9 +14,9 @@ type Manager struct {
 	requestHandler RequestHandler
 }
 
-func NewManager(outbound chan *common.LinkOMSG) *Manager {
+func NewManager(isServerSide bool, outbound chan *common.LinkOMSG) *Manager {
 	m := &Manager{
-		pool:     newPool(),
+		pool:     newPool(isServerSide),
 		outbound: outbound,
 	}
 	return m
@@ -65,7 +64,6 @@ func (manager *Manager) New() (*Session, error) {
 
 func (manager *Manager) Close() {
 	for item := range manager.pool.IterBuffered() {
-		fmt.Println("item = ", item)
 		item.Val.Close()
 		logrus.Debugf("close session %s", item.Key)
 		manager.pool.Delete(item.Val)

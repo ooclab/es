@@ -21,9 +21,9 @@ type Manager struct {
 	isessionManager *isession.Manager
 }
 
-func NewManager(outbound chan *common.LinkOMSG, ism *isession.Manager) *Manager {
+func NewManager(isServerSide bool, outbound chan *common.LinkOMSG, ism *isession.Manager) *Manager {
 	return &Manager{
-		pool:            NewPool(),
+		pool:            NewPool(isServerSide),
 		lpool:           newListenPool(),
 		outbound:        outbound,
 		isessionManager: ism,

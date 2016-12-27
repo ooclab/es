@@ -28,6 +28,8 @@ type LinkEvent struct {
 
 // LinkConfig reserved for config
 type LinkConfig struct {
+	// ID need to be started differently
+	IsServerSide bool
 }
 
 // Link master connection between two point
@@ -70,8 +72,11 @@ func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
 		lastRecvTime:       time.Now(), // FIXME: init time to prevent SetOffline triggered when program started
 		quit:               make(chan bool, 1),
 	}
-	l.isessionManager = isession.NewManager(l.outbound)
-	l.tunnelManager = tunnel.NewManager(l.outbound, l.isessionManager)
+	if config == nil {
+		config = &LinkConfig{}
+	}
+	l.isessionManager = isession.NewManager(config.IsServerSide, l.outbound)
+	l.tunnelManager = tunnel.NewManager(config.IsServerSide, l.outbound, l.isessionManager)
 	if hdr == nil {
 		hdr = newRequestHandler([]isession.Route{
 			{"/tunnel", l.tunnelManager.HandleTunnelCreate},

@@ -15,20 +15,25 @@ type Pool struct {
 	poolMutex *sync.Mutex
 }
 
-func NewPool() *Pool {
-	return &Pool{
-		curID:     0,
+func NewPool(isServerSide bool) *Pool {
+	p := &Pool{
 		idMutex:   &sync.Mutex{},
 		pool:      map[uint32]Tunneler{},
 		poolMutex: &sync.Mutex{},
 	}
+	if isServerSide {
+		p.curID = 1
+	} else {
+		p.curID = 2
+	}
+	return p
 }
 
 func (p *Pool) newID() uint32 {
 	p.idMutex.Lock()
 	defer p.idMutex.Unlock()
 	for {
-		p.curID++
+		p.curID += 2
 		if p.curID <= 0 {
 			continue
 		}
