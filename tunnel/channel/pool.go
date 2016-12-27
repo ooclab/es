@@ -4,45 +4,38 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ooclab/es/common"
 )
 
 type Pool struct {
-	curID     uint32
-	idMutex   *sync.Mutex
+	nextID    uint32
 	pool      map[uint32]*Channel
-	poolMutex *sync.Mutex
+	poolMutex sync.RWMutex
 }
 
 func NewPool() *Pool {
 	return &Pool{
-		curID:     0,
-		idMutex:   &sync.Mutex{},
+		nextID:    1,
 		pool:      map[uint32]*Channel{},
-		poolMutex: &sync.Mutex{},
+		poolMutex: sync.RWMutex{},
 	}
 }
 
-func (p *Pool) newID() uint32 {
-	p.idMutex.Lock()
-	defer p.idMutex.Unlock()
+func (p *Pool) newID() (id uint32) {
 	for {
-		p.curID++
-		if p.curID <= 0 {
-			continue
-		}
-		if !p.Exist(p.curID) {
-			break
+		id = atomic.AddUint32(&p.nextID, 1)
+		if !p.Exist(id) {
+			return
 		}
 	}
-	return p.curID
 }
 
 func (p *Pool) Exist(id uint32) bool {
-	p.poolMutex.Lock()
+	p.poolMutex.RLock()
 	_, exist := p.pool[id]
-	p.poolMutex.Unlock()
+	p.poolMutex.RUnlock()
 	return exist
 }
 
