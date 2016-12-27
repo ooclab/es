@@ -119,25 +119,31 @@ func (manager *Manager) OpenTunnel(localHost string, localPort int, remoteHost s
 		return err
 	}
 
-	respBody := responseTunnelCreate{}
-	err = session.SendJSONAndWait(map[string]interface{}{
-		"action": "/tunnel",
-		"body":   body,
-	}, &respBody)
+	resp, err := session.SendAndWait(&isession.Request{
+		Action: "/tunnel",
+		Body:   body,
+	})
 	if err != nil {
 		logrus.Errorf("send request to remote endpoint failed: %s", err)
 		return err
 	}
 
-	// fmt.Println("respBody: ", respBody)
-	if respBody.Error != "" {
-		logrus.Errorf("open tunnel in the remote endpoint failed: %+v", respBody)
+	// fmt.Println("resp: ", resp)
+	if resp.Status != "success" {
+		logrus.Errorf("open tunnel in the remote endpoint failed: %+v", resp)
 		return errors.New("open tunnel in the remote endpoint failed")
+	}
+
+	tcBody := tunnelCreateBody{}
+	if err = json.Unmarshal(resp.Body, &tcBody); err != nil {
+		logrus.Errorf("json unmarshal body failed: %s", err)
+		return errors.New("json unmarshal body error")
 	}
 
 	// success: open tunnel at local endpoint
 	logrus.Debug("open tunnel in the remote endpoint success")
 
+	cfg.ID = tcBody.ID
 	t, err := manager.tunnelCreate(cfg)
 	if err != nil {
 		logrus.Errorf("open tunnel in the local side failed: %s", err)

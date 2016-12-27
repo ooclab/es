@@ -18,12 +18,14 @@ func (manager *Manager) HandleTunnelCreate(r *isession.Request) (resp *isession.
 
 	logrus.Debug("handle got: ", cfg)
 
-	manager.tunnelCreate(cfg)
+	t, err := manager.tunnelCreate(cfg)
+	if err != nil {
+		logrus.Errorf("create tunnel failed: %s", err)
+		resp.Status = "create-tunnel-failed"
+		return
+	}
 
-	// fmt.Println("new tunnel ", tm)
-	body, _ := json.Marshal(map[string]interface{}{
-		"tunnel_id": 123,
-	})
+	body, _ := json.Marshal(tunnelCreateBody{ID: t.ID()})
 	resp = &isession.Response{
 		Status: "success",
 		Body:   body,
