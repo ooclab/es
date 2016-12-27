@@ -71,6 +71,9 @@ func (c *Channel) Serve() error {
 
 	// FIXME!
 	defer func() {
+		if r := recover(); r != nil {
+			logrus.Warn("channel serve recovered: ", r)
+		}
 		if !c.closed {
 			c.Close()
 		}
@@ -99,6 +102,7 @@ func (c *Channel) Serve() error {
 			ChannelID: c.ChannelID,
 			Payload:   buf[:reqLen],
 		}
+		// FIXME! panic: send on closed channel
 		c.Outbound <- &common.LinkOMSG{
 			Type:    common.LinkMsgTypeTunnel,
 			Payload: m.Bytes(),
