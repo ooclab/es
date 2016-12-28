@@ -1,35 +1,36 @@
 package common
 
-import "fmt"
-
-// msg type
-const (
-	LinkMsgTypeInnerSession      = 1
-	LinkMsgTypeTunnel            = 2
-	LinkMsgTypeHeartbeatRequest  = 3
-	LinkMsgTypeHeartbeatResponse = 4
+import (
+	"bytes"
+	"encoding/binary"
+	"io"
 )
 
+// message type
 const (
-	DefaultLinkMSGVersion uint8  = 2
-	DefaultLinkMSGFlag    uint16 = 0
+	LinkMsgTypePingRequest  = 1
+	LinkMsgTypePingResponse = 2
+	LinkMsgTypeSession      = 10
+	LinkMsgTypeTunnel       = 20
 )
 
-// LinkOMSG is for link's outbound
+// LinkOMSG is a link's outbound message struct
 type LinkOMSG struct {
-	Type    uint8
-	Payload []byte
+	Type uint8
+	Body []byte
 }
 
-var linkMsgHumanTypeMap = map[uint8]string{
-	LinkMsgTypeInnerSession: "InnerSession",
-	LinkMsgTypeTunnel:       "Tunnel",
-}
+// Reader get link message io.Reader
+func (m *LinkOMSG) Reader() io.Reader {
+	length := uint32(len(m.Body))
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, (uint32(m.Type)<<24)+length)
 
-func GetLinkMsgHumanType(_type uint8) string {
-	if v, ok := linkMsgHumanTypeMap[_type]; ok {
-		return v
+	if length > 0 {
+		// binary.Write(buf, binary.LittleEndian, m.Payload)
+		// FIXME!
+		buf.Write(m.Body)
 	}
 
-	return fmt.Sprintf("Unknown(%d)", _type)
+	return bytes.NewReader(buf.Bytes())
 }

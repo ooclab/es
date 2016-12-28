@@ -41,8 +41,8 @@ func (session *Session) sendAndWait(payload []byte) (respPayload []byte, err err
 	}
 
 	session.outbound <- &common.LinkOMSG{
-		Type:    common.LinkMsgTypeInnerSession,
-		Payload: m.Bytes(),
+		Type: common.LinkMsgTypeSession,
+		Body: m.Bytes(),
 	}
 
 	// TODO: timeout

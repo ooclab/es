@@ -1,8 +1,11 @@
 package link
 
 import (
+	"bufio"
+	"encoding/binary"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,13 +13,31 @@ import (
 	"github.com/ooclab/es/common"
 	"github.com/ooclab/es/isession"
 	"github.com/ooclab/es/tunnel"
-	"github.com/satori/go.uuid"
 )
 
 var (
-	// ErrEventChannelIsFull the event channel is full
 	ErrEventChannelIsFull = errors.New("event channel is full")
+	ErrLinkShutdown       = errors.New("link is shutdown")
+	ErrTimeout            = errors.New("timeout")
+	ErrKeepAliveTimeout   = errors.New("keepalive error")
+	ErrMsgPingInvalid     = errors.New("invalid ping message")
 )
+
+const (
+	sizeOfType   = 1
+	sizeOfLength = 3
+	headerSize   = sizeOfType + sizeOfLength
+)
+
+type linkMSGHeader struct {
+	Type   uint8
+	Length uint32
+}
+
+type linkMSG struct {
+	Header linkMSGHeader
+	Body   io.Reader
+}
 
 // LinkEvent the event struct of link
 type LinkEvent struct {
@@ -30,15 +51,31 @@ type LinkEvent struct {
 type LinkConfig struct {
 	// ID need to be started differently
 	IsServerSide bool
+
+	// EnableKeepalive is used to do a period keep alive
+	// messages using a ping.
+	EnableKeepAlive bool
+
+	// KeepAliveInterval is how often to perform the keep alive
+	KeepAliveInterval time.Duration
+
+	// ConnectionWriteTimeout is meant to be a "safety valve" timeout after
+	// we which will suspect a problem with the underlying connection and
+	// close it. This is only applied to writes, where's there's generally
+	// an expectation that things will move along quickly.
+	ConnectionWriteTimeout time.Duration
 }
 
 // Link master connection between two point
 type Link struct {
-	ID string // uuid ?
+	ID     uint32
+	config *LinkConfig
 
 	isessionManager *isession.Manager
 	tunnelManager   *tunnel.Manager
 
+	// bufRead:    bufio.NewReader(conn)
+	// recvBuf = bytes.NewBuffer(make([]byte, 0, length))
 	outbound         chan *common.LinkOMSG
 	connDisconnected chan bool
 
@@ -53,27 +90,52 @@ type Link struct {
 	offlineTime        time.Time
 	closed             bool
 	quit               chan bool
+
+	// pings is used to track inflight pings
+	pings    map[uint32]chan struct{}
+	pingID   uint32
+	pingLock sync.Mutex
+
+	// recvDoneCh is closed when recv() exits
+	recvDoneCh chan struct{}
+
+	// shutdown is used to safely close a link
+	shutdown     bool
+	shutdownErr  error
+	shutdownCh   chan struct{}
+	shutdownLock sync.Mutex
 }
 
+// NewLink create a new link
 func NewLink(config *LinkConfig) *Link {
 	return newLink(config, nil)
 }
 
+// NewLinkCustom create a new link by custom isession.RequestHandler
 func NewLinkCustom(config *LinkConfig, hdr isession.RequestHandler) *Link {
 	return newLink(config, hdr)
 }
 
 func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
+	if config == nil {
+		config = &LinkConfig{
+			EnableKeepAlive:        true,
+			KeepAliveInterval:      30 * time.Second,
+			ConnectionWriteTimeout: 10 * time.Second,
+		}
+	}
 	l := &Link{
+		config:             config,
 		outbound:           make(chan *common.LinkOMSG, 1),
 		heartbeatInterval:  15,
 		offlineDetectRelay: 60,
 		lastRecvTimeMutex:  &sync.Mutex{},
 		lastRecvTime:       time.Now(), // FIXME: init time to prevent SetOffline triggered when program started
 		quit:               make(chan bool, 1),
-	}
-	if config == nil {
-		config = &LinkConfig{}
+
+		pings:      make(map[uint32]chan struct{}),
+		recvDoneCh: make(chan struct{}),
+		shutdownCh: make(chan struct{}),
 	}
 	l.isessionManager = isession.NewManager(config.IsServerSide, l.outbound)
 	l.tunnelManager = tunnel.NewManager(config.IsServerSide, l.outbound, l.isessionManager)
@@ -83,137 +145,20 @@ func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
 		})
 	}
 	l.isessionManager.SetRequestHandler(hdr)
+	if config.EnableKeepAlive {
+		go l.keepalive()
+	}
 	return l
 }
 
-func (l *Link) Bind(conn io.ReadWriteCloser) error {
-	l.connDisconnected = make(chan bool, 1)
-
-	l.ID = uuid.NewV4().String()
-
-	c := newConn(conn)
-
-	// heartbeat
-	go func() {
-		for {
-			select {
-			case <-time.After(time.Second * 3):
-
-				unfresh := l.unfreshRecvTime()
-				// fmt.Println("-- ", time.Now(), l.lastRecvTime, l.offline, unfresh, l.offlineDetectRelay)
-
-				if l.offline {
-					if unfresh < float64(l.offlineDetectRelay) {
-						l.SetOnline()
-					}
-				} else {
-					if unfresh >= float64(l.offlineDetectRelay) {
-						l.SetOffline()
-					}
-				}
-
-				if unfresh >= float64(l.heartbeatInterval) {
-					// send heartbeat
-					// fmt.Println("start sendHeartbeatRequest ...")
-					if err := l.sendHeartbeatRequest(); err != nil {
-						logrus.Debug("send heartbeat request failed: ", err)
-					}
-					// fmt.Println("finish sendHeartbeatRequest ...")
-				}
-
-			case <-l.quit:
-				logrus.Debugf("link %s: heartbeat is quit", l.ID)
-				return
-			}
-		}
-	}()
-
-	go func() {
-		// TODO:
-		defer safeRun(func() { conn.Close() })
-		defer closeBoolChan(l.connDisconnected)
-		defer closeBoolChan(l.quit)
-
-		logrus.Debug("start handler for link message recv")
-		for {
-			m, err := c.Recv()
-			if err != nil {
-				if err == io.EOF {
-					logrus.Debug("conn is closed")
-					break
-				}
-
-				if err == ErrMessageLengthTooLarge {
-					logrus.Warnf("link %s got a large message, CLOSE IT.", l.ID)
-					// TODO: notice remote endpoint!
-				}
-
-				// TODO
-				logrus.Errorf("read link frame error: %s", err)
-				break
-			}
-
-			l.updateLastRecvTime()
-
-			// dispatch
-			switch m.Type {
-
-			case common.LinkMsgTypeInnerSession:
-				err = l.isessionManager.HandleIn(m.Payload)
-
-			case common.LinkMsgTypeTunnel:
-				err = l.tunnelManager.HandleIn(m.Payload)
-
-			case common.LinkMsgTypeHeartbeatRequest:
-				l.sendHeartbeatResponse()
-
-			case common.LinkMsgTypeHeartbeatResponse:
-				logrus.Debugf("link %s heartbeat success", l.ID)
-
-			default:
-				logrus.Errorf("unknown link message: %s", m)
-				err = ErrMessageTypeUnknown
-
-			}
-
-			if err != nil {
-				logrus.Errorf("handle link message %s error: %s", m, err)
-				break
-			}
-		}
-		logrus.Debugf("link %s: HandleIn is stoped", l.ID)
-	}()
-
-	go func() {
-		var omsg *common.LinkOMSG
-		for {
-			select {
-			case omsg = <-l.outbound:
-				if omsg == nil {
-					logrus.Errorf("link %s: l.outbound is closed", l.ID)
-					closeBoolChan(l.quit)
-					return
-				}
-			case <-l.quit:
-				logrus.Debugf("link %s: got l.quit event,  quit recv l.outbound", l.ID)
-				return
-			}
-			m := &linkMSG{
-				Type:    omsg.Type,
-				Payload: omsg.Payload,
-			}
-
-			if err := c.Send(m); err != nil {
-				logrus.Errorf("link %s: send message to conn failed: %s", l.ID, err)
-				safeRun(func() { conn.Close() })
-				closeBoolChan(l.connDisconnected)
-				closeBoolChan(l.quit)
-				return
-			}
-		}
-	}()
-
-	return nil
+// IsClosed does a safe check to see if we have shutdown
+func (l *Link) IsClosed() bool {
+	select {
+	case <-l.shutdownCh:
+		return true
+	default:
+		return false
+	}
 }
 
 func (l *Link) closeOutbound() {
@@ -225,17 +170,193 @@ func (l *Link) closeOutbound() {
 	close(l.outbound)
 }
 
+// Close is used to close the link
 func (l *Link) Close() error {
-	closeBoolChan(l.quit)
+	l.shutdownLock.Lock()
+	defer l.shutdownLock.Unlock()
+
+	if l.shutdown {
+		return nil
+	}
+	l.shutdown = true
+	if l.shutdownErr == nil {
+		l.shutdownErr = ErrLinkShutdown
+	}
+	close(l.shutdownCh)
+	<-l.recvDoneCh // FIXME!
 	l.closeOutbound()
+	// TODO: close isessions & tunnles
 	l.tunnelManager.Close()
 	l.isessionManager.Close()
 	return nil
 }
 
-func (l *Link) WaitDisconnected() error {
-	<-l.connDisconnected
-	logrus.Debugf("link %s is disconnected", l.ID)
+// exitErr is used to handle an error that is causing the
+// link to terminate.
+func (l *Link) exitErr(err error) {
+	l.shutdownLock.Lock()
+	if l.shutdownErr == nil {
+		l.shutdownErr = err
+	}
+	l.shutdownLock.Unlock()
+	l.Close()
+}
+
+// Ping is used to measure the RTT response time
+func (l *Link) Ping() (time.Duration, error) {
+	// Get a channel for the ping
+	ch := make(chan struct{})
+
+	// Get a new ping id, mark as pending
+	l.pingLock.Lock()
+	id := l.pingID
+	l.pingID++
+	l.pings[id] = ch
+	l.pingLock.Unlock()
+
+	// Send the ping request
+	payload := make([]byte, 4)
+	binary.LittleEndian.PutUint32(payload, id)
+	l.outbound <- &common.LinkOMSG{
+		Type: common.LinkMsgTypePingRequest,
+		Body: payload,
+	}
+
+	// Wait for a response
+	start := time.Now()
+	select {
+	case <-ch:
+	case <-time.After(l.config.ConnectionWriteTimeout):
+		l.pingLock.Lock()
+		delete(l.pings, id) // Ignore it if a response comes later.
+		l.pingLock.Unlock()
+		return 0, ErrTimeout
+	case <-l.shutdownCh:
+		return 0, ErrLinkShutdown
+	}
+
+	// Compute the RTT
+	return time.Now().Sub(start), nil
+}
+
+// keepalive is a long running goroutine that periodically does
+// a ping to keep the connection alive.
+func (l *Link) keepalive() {
+	for {
+		select {
+		case <-time.After(l.config.KeepAliveInterval):
+			_, err := l.Ping()
+			if err != nil {
+				logrus.Printf("link %d: keepalive failed: %v", l.ID, err)
+				l.exitErr(ErrKeepAliveTimeout)
+				return
+			}
+		case <-l.shutdownCh:
+			return
+		}
+	}
+}
+
+func (l *Link) recv(conn io.Reader, errCh chan error) {
+	logrus.Debug("start handler for link message recv")
+	bufRead := bufio.NewReader(conn)
+	hdrBuf := make([]byte, headerSize)
+	var bodyBuf []byte
+	var i uint32
+	var err error
+	for {
+		// read header
+		if _, err = io.ReadFull(bufRead, hdrBuf); err != nil {
+			if err != io.EOF && !strings.Contains(err.Error(), "closed") && !strings.Contains(err.Error(), "reset by peer") {
+				logrus.Errorf("link %d: Failed to read header: %v", l.ID, err)
+			}
+			// TODO: nil
+			errCh <- err
+			return
+		}
+		i = binary.LittleEndian.Uint32(hdrBuf)
+		mType := uint8(i >> 24)
+		mLength := i & 0xffffff
+
+		// read body
+		bodyBuf = make([]byte, mLength)
+		if _, err = io.ReadFull(bufRead, bodyBuf); err != nil {
+			if err != io.EOF && !strings.Contains(err.Error(), "closed") && !strings.Contains(err.Error(), "reset by peer") {
+				logrus.Errorf("link %d: Failed to read header: %v", l.ID, err)
+			}
+			// TODO: nil
+			errCh <- err
+			return
+		}
+
+		l.updateLastRecvTime()
+
+		// dispatch
+		switch mType {
+		case common.LinkMsgTypeSession:
+			err = l.isessionManager.HandleIn(bodyBuf)
+		case common.LinkMsgTypeTunnel:
+			err = l.tunnelManager.HandleIn(bodyBuf)
+		case common.LinkMsgTypePingRequest:
+			l.outbound <- &common.LinkOMSG{
+				Type: common.LinkMsgTypePingResponse,
+				Body: bodyBuf,
+			}
+		case common.LinkMsgTypePingResponse:
+			err = l.handlePing(bodyBuf)
+		default:
+			logrus.Errorf("link %d: unknown message type %d", l.ID, mType)
+			// TODO:
+		}
+
+		if err != nil {
+			logrus.Errorf("link %d: handle link message error: %s", l.ID, err)
+			errCh <- err
+			return
+		}
+	}
+}
+
+func (l *Link) send(conn io.Writer, errCh chan error) {
+	for {
+		select {
+		case m := <-l.outbound:
+			_, err := io.Copy(conn, m.Reader())
+			if err != nil {
+				logrus.Errorf("link %d: write data to conn failed: %s", l.ID, err)
+				errCh <- err
+				return
+			}
+		case <-l.shutdownCh:
+			logrus.Debugf("link %d: send is stop", l.ID)
+			errCh <- nil
+			return
+		}
+	}
+}
+
+// Join is bind link with a underlying connection (tcp)
+func (l *Link) Join(conn io.ReadWriteCloser) chan error {
+	errCh := make(chan error, 1)
+	go l.recv(conn, errCh)
+	go l.send(conn, errCh)
+	// TODO:
+	return errCh
+}
+
+// handlePing is invokde for a LinkMsgTypePing frame
+func (l *Link) handlePing(payload []byte) error {
+	if len(payload) != 4 {
+		return ErrMsgPingInvalid
+	}
+	pingID := binary.LittleEndian.Uint32(payload)
+	l.pingLock.Lock()
+	ch := l.pings[pingID]
+	if ch != nil {
+		delete(l.pings, pingID)
+		close(ch)
+	}
+	l.pingLock.Unlock()
 	return nil
 }
 
@@ -297,33 +418,9 @@ func (l *Link) IsOffline() bool {
 	return l.offline
 }
 
-func (l *Link) IsClosed() bool {
-	return l.closed
-}
-
 // OfflineDuration get the duration time of the offline
 func (l *Link) OfflineDuration() time.Duration {
 	return time.Since(l.offlineTime)
-}
-
-func (l *Link) SetHeartbeatInterval(seconds int) {
-	l.heartbeatInterval = seconds
-}
-
-func (l *Link) sendHeartbeatRequest() error {
-	m := &common.LinkOMSG{
-		Type: common.LinkMsgTypeHeartbeatRequest,
-		// Payload: []byte{},
-	}
-	return l.syncSend(m)
-}
-
-func (l *Link) sendHeartbeatResponse() error {
-	m := &common.LinkOMSG{
-		Type: common.LinkMsgTypeHeartbeatResponse,
-		// Payload: []byte{},
-	}
-	return l.syncSend(m)
 }
 
 func (l *Link) syncSend(m *common.LinkOMSG) error {
@@ -349,19 +446,4 @@ func (l *Link) syncSendEvent(event *LinkEvent) error {
 		logrus.Debug("l.Event Channel full. Discarding value")
 		return ErrEventChannelIsFull
 	}
-}
-
-func safeRun(f func()) {
-	defer func() {
-		if r := recover(); r != nil {
-			logrus.Warn("safeRun recovered: ", r)
-		}
-	}()
-	f()
-}
-
-func closeBoolChan(b chan bool) {
-	safeRun(func() {
-		close(b)
-	})
 }

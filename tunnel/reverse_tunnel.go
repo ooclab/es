@@ -94,8 +94,8 @@ func (t *ReverseTunnel) closeRemoteChannel(cid uint32) {
 	}
 	logrus.Debugf("Before: notice remote endpoint to close channel %d", cid)
 	t.outbound <- &common.LinkOMSG{
-		Type:    common.LinkMsgTypeTunnel,
-		Payload: m.Bytes(),
+		Type: common.LinkMsgTypeTunnel,
+		Body: m.Bytes(),
 	}
 	logrus.Debugf("notice remote endpoint to close channel %d", cid)
 }

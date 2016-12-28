@@ -43,9 +43,11 @@ func getServerAndClient() (serverLink *link.Link, clientLink *link.Link, err err
 
 			go func() {
 				l := link.NewLink(nil)
-				l.Bind(conn)
 				serverLinkCh <- l
-				l.WaitDisconnected()
+				errCh := l.Join(conn)
+				err := <-errCh
+				l.Close()
+				fmt.Println("link quit: ", err)
 			}()
 		}
 	}()
@@ -80,10 +82,11 @@ func connectServer(addr string) *link.Link {
 		panic(err)
 	}
 	l := link.NewLink(nil)
-	l.Bind(conn)
+	errCh := l.Join(conn)
 	// FIXME: quit it not a good choice for testcase!
 	go func() {
-		l.WaitDisconnected()
+		err := <-errCh
+		fmt.Println("link quit: ", err)
 		l.Close()
 	}()
 	return l

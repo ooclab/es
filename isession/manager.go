@@ -37,8 +37,8 @@ func (manager *Manager) HandleIn(payload []byte) error {
 	case MsgTypeRequest:
 		rMsg := manager.requestHandler.Handle(m)
 		manager.outbound <- &common.LinkOMSG{
-			Type:    common.LinkMsgTypeInnerSession,
-			Payload: rMsg.Bytes(),
+			Type: common.LinkMsgTypeSession,
+			Body: rMsg.Bytes(),
 		}
 
 	case MsgTypeResponse:

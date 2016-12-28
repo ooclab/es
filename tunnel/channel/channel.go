@@ -104,8 +104,8 @@ func (c *Channel) Serve() error {
 		}
 		// FIXME! panic: send on closed channel
 		c.Outbound <- &common.LinkOMSG{
-			Type:    common.LinkMsgTypeTunnel,
-			Payload: m.Bytes(),
+			Type: common.LinkMsgTypeTunnel,
+			Body: m.Bytes(),
 		}
 		atomic.AddUint64(&c.recv, uint64(reqLen))
 	}

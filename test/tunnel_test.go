@@ -33,6 +33,21 @@ func Test_LinkChannelPing(t *testing.T) {
 	}
 }
 
+func Test_LinkPing(t *testing.T) {
+	_, clientLink, _ := getServerAndClient()
+	_, err := clientLink.Ping()
+	if err != nil {
+		t.Errorf("ping error: %s", err)
+	}
+}
+
+func Benchmark_LinkPing(b *testing.B) {
+	_, clientLink, _ := getServerAndClient()
+	for i := 0; i < b.N; i++ { //use b.N for looping
+		clientLink.Ping()
+	}
+}
+
 func Benchmark_LinkChannelPing(b *testing.B) {
 	for i := 0; i < b.N; i++ { //use b.N for looping
 		if err := runPingClient("http://127.0.0.1:54321/ping"); err != nil {
