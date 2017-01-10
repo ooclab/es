@@ -117,7 +117,7 @@ func (seg *Segment) Bytes() []byte {
 }
 
 func (seg *Segment) Length() int {
-	return 30 + len(seg.b)
+	return headerSize + len(seg.b)
 }
 
 func newSingleSegment(segType uint8, flags uint16, streamID uint32, message []byte) *Segment {
