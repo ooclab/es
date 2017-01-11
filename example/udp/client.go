@@ -12,6 +12,10 @@ import (
 	"github.com/ooclab/es/proto/udp"
 )
 
+func init() {
+	logrus.SetLevel(logrus.DebugLevel)
+}
+
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Printf("Usage: %s RemoteAddress\n", os.Args[0])

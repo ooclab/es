@@ -3,9 +3,7 @@ package udp
 import (
 	"bytes"
 	"container/heap"
-	"crypto/md5"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -16,135 +14,30 @@ import (
 )
 
 const (
-	// protoVersion is the only version we support
-	protoVersion uint8 = 0
-	headerSize         = 30
-
-	segTypeMsgSYN      uint8 = 1
-	segTypeMsgACK      uint8 = 2
-	segTypeMsgReceived uint8 = 3
-	segTypeMsgReTrans  uint8 = 4
-	segTypeMsgTrans    uint8 = 5
-)
-
-const (
-	segmentMaxSize     = 1400
-	segmentBodyMaxSize = segmentMaxSize - headerSize // <= MTU
-
-	handshakeKey   = "handshake"
 	numRetransmit  = 9
 	defaultTimeout = 100
 	maxTimeout     = 1600
 
 	defaultConnTranSize = 10
+	defaultConnTimeout  = 30 * time.Second
+	defaultPingInterval = 6 * time.Second
+	defaultPingTimeout  = 3 * time.Second
 
 	maxRecvPoolSize = 10
 	maxSendPoolSize = 10
 )
 
-const (
-	// SYN is sent to signal a new stream. May
-	// be sent with a data payload
-	flagSYN uint16 = 1 << iota
-
-	// ACK is sent to acknowledge a new stream. May
-	// be sent with a data payload
-	flagACK
-
-	// FIN is sent to half-close the given stream.
-	// May be sent with a data payload.
-	flagFIN
-
-	// RST is used to hard close a given stream.
-	flagRST
-)
-
 var (
-	errSegmentChecksum = errors.New("segment checksum error")
-	errClientExist     = errors.New("client is exist in ClientPool")
+	// ErrTimeout is commont timeout error
+	ErrTimeout = errors.New("timeout")
+	// ErrConnectionShutdown is a chan single of connection shutdown
+	ErrConnectionShutdown  = errors.New("connection is shutdown")
+	errSegmentChecksum     = errors.New("segment checksum error")
+	errClientExist         = errors.New("client is exist in ClientPool")
+	errSegmentBodyTooLarge = errors.New("segment body is too large")
 )
 
-// segment header
-// | Version(1) | Type(1) | Flags(2) | StreamID(4) | TransID(2) | OrderID(2) | Checksum(16) | Length(2) |
-type header []byte
-
-func (h header) Version() uint8 {
-	return h[0]
-}
-func (h header) Type() uint8 {
-	return h[1]
-}
-func (h header) Flags() uint16 {
-	return binary.BigEndian.Uint16(h[2:4])
-}
-func (h header) StreamID() uint32 {
-	return binary.BigEndian.Uint32(h[4:8])
-}
-func (h header) TransID() uint16 {
-	return binary.BigEndian.Uint16(h[8:10])
-}
-func (h header) OrderID() uint16 {
-	return binary.BigEndian.Uint16(h[10:12])
-}
-func (h header) Checksum() []byte {
-	return h[12:28]
-}
-func (h header) Length() uint16 {
-	return binary.BigEndian.Uint16(h[28:30])
-}
-func (h header) String() string {
-	return fmt.Sprintf("Version:%d Type:%d Flags:%d StreamID:%d TransID:%d OrderID:%d Length:%d Checksum:%s",
-		h.Version(), h.Type(), h.Flags(), h.StreamID(), h.TransID(), h.OrderID(), h.Length(), hex.EncodeToString(h.Checksum()))
-}
-func (h header) encode(segType uint8, flags uint16, streamID uint32, transID uint16, orderID uint16, checksum [md5.Size]byte, length uint16) {
-	h[0] = protoVersion
-	h[1] = segType
-	binary.BigEndian.PutUint16(h[2:4], flags)
-	binary.BigEndian.PutUint32(h[4:8], streamID)
-	binary.BigEndian.PutUint16(h[8:10], transID)
-	binary.BigEndian.PutUint16(h[10:12], orderID)
-	copy(h[12:28], checksum[:])
-	binary.BigEndian.PutUint16(h[28:30], length)
-}
-
-type Segment struct {
-	h header
-	b []byte
-}
-
-func (seg *Segment) Bytes() []byte {
-	return append(seg.h, seg.b...)
-}
-
-func (seg *Segment) Length() int {
-	return headerSize + len(seg.b)
-}
-
-func newSingleSegment(segType uint8, flags uint16, streamID uint32, message []byte) *Segment {
-	hdr := header(make([]byte, headerSize))
-	hdr.encode(segType, flags, streamID, 0, 0, md5.Sum(message), uint16(len(message)))
-	return &Segment{
-		h: hdr,
-		b: message,
-	}
-}
-
-func loadSegment(data []byte) (*Segment, error) {
-	hdr := header(make([]byte, headerSize))
-	copy(hdr, data[0:headerSize])
-	seg := &Segment{h: hdr, b: data[headerSize:]}
-	if hdr.Length() == 0 {
-		return seg, nil // FIXME!
-	}
-	checksum := md5.Sum(seg.b)
-	// FIXME!
-	if !bytes.Equal(seg.h.Checksum(), checksum[:]) {
-		return nil, errSegmentChecksum
-	}
-	return seg, nil
-}
-
-type segmentHeap []*Segment
+type segmentHeap []*segment
 
 func (h segmentHeap) Len() int           { return len(h) }
 func (h segmentHeap) Less(i, j int) bool { return h[i].h.OrderID() < h[j].h.OrderID() }
@@ -153,7 +46,7 @@ func (h segmentHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 func (h *segmentHeap) Push(x interface{}) {
 	// Push and Pop use pointer receivers because they modify the slice's length,
 	// not just its contents.
-	*h = append(*h, x.(*Segment))
+	*h = append(*h, x.(*segment))
 }
 
 func (h *segmentHeap) Pop() interface{} {
@@ -182,7 +75,7 @@ func newMsgRecving() *msgRecving {
 	return m
 }
 
-func (m *msgRecving) Save(seg *Segment) ([]byte, error) {
+func (m *msgRecving) Save(seg *segment) ([]byte, error) {
 	oid := seg.h.OrderID()
 	if oid == m.nid {
 		if oid == 1 {
@@ -213,42 +106,57 @@ func (m *msgRecving) Save(seg *Segment) ([]byte, error) {
 }
 
 type msgSending struct {
-	segments []*Segment
+	segments []*segment
 }
 
 func newMsgSending() *msgSending {
 	return &msgSending{}
 }
 
-func (m *msgSending) Save(seg *Segment) error {
+func (m *msgSending) Save(seg *segment) error {
 	return nil
 }
 
 // Conn is a UDP implement of es.Conn
 type Conn struct {
-	c       *net.UDPConn
-	raddr   *net.UDPAddr
-	id      uint32
-	rl      []*msgRecving // recving list
-	sl      []*msgSending // sending list
-	inbound chan []byte
+	c          *net.UDPConn
+	raddr      *net.UDPAddr
+	id         uint32
+	rl         []*msgRecving // recving list
+	sl         []*msgSending // sending list
+	lastActive time.Time
+	inbound    chan []byte
+
+	// pings is used to track inflight pings
+	pings    map[uint32]chan struct{}
+	pingID   uint32
+	pingLock sync.Mutex
+
+	shutdownCh chan struct{}
 }
 
 func newConn(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) *Conn {
 	return &Conn{
-		c:       conn,
-		raddr:   raddr,
-		id:      id,
-		rl:      make([]*msgRecving, defaultConnTranSize),
-		sl:      make([]*msgSending, defaultConnTranSize),
-		inbound: make(chan []byte, 1),
+		c:          conn,
+		raddr:      raddr,
+		id:         id,
+		rl:         make([]*msgRecving, defaultConnTranSize),
+		sl:         make([]*msgSending, defaultConnTranSize),
+		lastActive: time.Now(),
+		inbound:    make(chan []byte, 1),
+
+		pings: make(map[uint32]chan struct{}),
+
+		shutdownCh: make(chan struct{}),
 	}
 }
 
+// RemoteAddr get the address of remote endpoint
 func (c *Conn) RemoteAddr() net.Addr {
 	return c.raddr
 }
 
+// LocalAddr get the address of local endpoint
 func (c *Conn) LocalAddr() net.Addr {
 	return c.c.LocalAddr()
 }
@@ -258,6 +166,8 @@ func (c *Conn) String() string {
 }
 
 func (c *Conn) handle(msg []byte) error {
+	c.lastActive = time.Now()
+
 	seg, err := loadSegment(msg)
 	if err != nil {
 		return err
@@ -267,9 +177,24 @@ func (c *Conn) handle(msg []byte) error {
 
 	switch types {
 	case segTypeMsgSYN:
-		seg = newSingleSegment(segTypeMsgACK, 0, c.id, []byte("handshake"))
-		_, err = c.c.WriteToUDP(seg.Bytes(), c.raddr)
+		seg = newACKSegment(seg.b) // FIXME!
+		_, err = c.c.WriteToUDP(seg.bytes(), c.raddr)
 		return err
+	case segTypeMsgPingReq:
+		seg = newPingRepSegment(c.id, seg.b)
+		_, err = c.c.WriteToUDP(seg.bytes(), c.raddr)
+		return err
+	case segTypeMsgPingRep:
+		// notice ping wait
+		pingID := binary.BigEndian.Uint32(seg.b[0:4])
+		c.pingLock.Lock()
+		ch := c.pings[pingID]
+		if ch != nil {
+			delete(c.pings, pingID)
+			close(ch)
+		}
+		c.pingLock.Unlock()
+		return nil
 	case segTypeMsgReceived:
 		// FIXME!
 		transID := seg.h.TransID()
@@ -304,23 +229,21 @@ func (c *Conn) handle(msg []byte) error {
 		// cleanup
 		c.rl[transID] = nil
 		// send msg received
-		seg := &Segment{
-			h: header(make([]byte, headerSize)),
-			b: []byte{},
-		}
-		seg.h.encode(segTypeMsgReceived, 0, c.id, transID, 0, [md5.Size]byte{}, 0)
-		c.c.WriteToUDP(seg.Bytes(), c.raddr)
+		seg, _ := newSegment(segTypeMsgReceived, 0, c.id, transID, 0, nil)
+		c.c.WriteToUDP(seg.bytes(), c.raddr)
 		return nil // FIXME! error
 	}
 	return nil
 }
 
+// RecvMsg recv a single message
 func (c *Conn) RecvMsg() ([]byte, error) {
 	// TODO: timeout
 	msg := <-c.inbound
 	return msg, nil
 }
 
+// SendMsg send a single message
 func (c *Conn) SendMsg(message []byte) error {
 	length := len(message)
 	if length <= 0 {
@@ -329,12 +252,8 @@ func (c *Conn) SendMsg(message []byte) error {
 
 	// signle segment
 	if length <= segmentBodyMaxSize {
-		seg := &Segment{
-			h: header(make([]byte, headerSize)),
-			b: message,
-		}
-		seg.h.encode(segTypeMsgTrans, 0, c.id, 0, 0, md5.Sum(message), uint16(length))
-		_, err := c.c.WriteToUDP(seg.Bytes(), c.raddr)
+		seg, _ := newSegment(segTypeMsgTrans, 0, c.id, 0, 0, message)
+		_, err := c.c.WriteToUDP(seg.bytes(), c.raddr)
 		return err
 	}
 
@@ -347,19 +266,14 @@ func (c *Conn) SendMsg(message []byte) error {
 	length = len(message)
 
 	transID := uint16(0)
-	hdr := header(make([]byte, headerSize))
 	for i := 0; i <= (length / segmentBodyMaxSize); i++ {
 		end := (i + 1) * segmentBodyMaxSize
 		if end > length {
 			end = length
 		}
 		b := message[i*segmentBodyMaxSize : end]
-		hdr.encode(segTypeMsgTrans, 0, c.id, transID, uint16(i+1), md5.Sum(b), uint16(len(b)))
-		seg := &Segment{
-			h: hdr,
-			b: b,
-		}
-		_, err := c.c.WriteToUDP(seg.Bytes(), c.raddr)
+		seg, _ := newSegment(segTypeMsgTrans, 0, c.id, transID, uint16(i+1), b)
+		_, err := c.c.WriteToUDP(seg.bytes(), c.raddr)
 		if err != nil {
 			return err
 		}
@@ -378,59 +292,67 @@ func (c *Conn) SendMsg(message []byte) error {
 	return nil
 }
 
+// Ping is used to measure the RTT response time
+func (c *Conn) Ping() (time.Duration, error) {
+	ch := make(chan struct{})
+
+	// Get a new ping id, mark as pending
+	c.pingLock.Lock()
+	id := c.pingID
+	c.pingID++
+	c.pings[id] = ch
+	c.pingLock.Unlock()
+
+	// Send the ping request
+	seg := newPingReqSegment(c.id, id)
+	c.c.WriteToUDP(seg.bytes(), c.raddr)
+
+	// Wait for a response
+	start := time.Now()
+	select {
+	case <-ch:
+	case <-time.After(defaultPingTimeout):
+		c.pingLock.Lock()
+		delete(c.pings, id)
+		c.pingLock.Unlock()
+		return 0, ErrTimeout
+	case <-c.shutdownCh:
+		return 0, ErrConnectionShutdown
+	}
+
+	// TODO: compute time duration
+	return time.Now().Sub(start), nil
+}
+
+// Close close this connection
 func (c *Conn) Close() error {
 	logrus.Warnf("close is not completed")
 	return nil
 }
 
-// ClientPool manage all clients
-// TODO: max clients limit!
-type ClientPool struct {
-	// id manager
-	nextID uint32
-	idm    sync.Mutex
-
-	// pipes manager
-	idAddrMap   map[uint32]string
+// ConnPool manage all connections
+type ConnPool struct {
 	addrConnMap map[string]*Conn
 	m           sync.Mutex
 }
 
-func newClientPool() *ClientPool {
-	return &ClientPool{
-		nextID:      0,
-		idm:         sync.Mutex{},
-		idAddrMap:   map[uint32]string{},
+func newConnPool() *ConnPool {
+	return &ConnPool{
 		addrConnMap: map[string]*Conn{},
 		m:           sync.Mutex{},
 	}
 }
 
-func (p *ClientPool) newID() uint32 {
-	// TODO: lock
-	p.idm.Lock()
-	defer p.idm.Unlock()
-	for {
-		p.nextID++
-		p.m.Lock()
-		_, ok := p.idAddrMap[p.nextID]
-		p.m.Unlock()
-		if !ok {
-			break
-		}
-	}
-	return p.nextID
-}
-
-func (p *ClientPool) GetConn(addr string) (*Conn, bool) {
+// Get get the connection specified by address string
+func (p *ConnPool) Get(addr net.Addr) (*Conn, bool) {
 	p.m.Lock()
-	c, ok := p.addrConnMap[addr]
+	c, ok := p.addrConnMap[addr.String()]
 	p.m.Unlock()
 	return c, ok
 }
 
-// TODO: delete
-func (p *ClientPool) NewSingle(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) (*Conn, error) {
+// New create a special single connection
+func (p *ConnPool) New(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) (*Conn, error) {
 	addr := raddr.String()
 	p.m.Lock()
 	_, ok := p.addrConnMap[addr]
@@ -445,60 +367,130 @@ func (p *ClientPool) NewSingle(conn *net.UDPConn, raddr *net.UDPAddr, id uint32)
 	return c, nil
 }
 
-func (p *ClientPool) New(conn *net.UDPConn, raddr *net.UDPAddr) (*Conn, error) {
-	addr := raddr.String()
-	p.m.Lock()
-	_, ok := p.addrConnMap[addr]
-	p.m.Unlock()
-	if ok {
-		return nil, errClientExist
-	}
-	id := p.newID()
-	c := newConn(conn, raddr, id)
-	p.m.Lock()
-	p.idAddrMap[id] = addr
-	p.addrConnMap[addr] = c
-	p.m.Unlock()
-	return c, nil
-}
-
-func (p *ClientPool) Delete(conn *Conn) error {
+// Delete remove a conn from client pool
+func (p *ConnPool) Delete(conn *Conn) error {
 	p.m.Lock()
 	defer p.m.Unlock()
-	addr, ok := p.idAddrMap[conn.id]
-	if !ok {
-		return errors.New("delete: no such id in idAddrMap")
-	}
-	_, ok = p.addrConnMap[addr]
-	if !ok {
+	addr := conn.raddr.String()
+	if _, ok := p.addrConnMap[addr]; !ok {
 		return errors.New("delete: no such addr in addrConnMap")
 	}
 	delete(p.addrConnMap, addr)
-	delete(p.idAddrMap, conn.id)
 	return nil
+}
+
+// GarbageCollection delete the disconnected clients
+func (p *ConnPool) GarbageCollection() {
+	addrs := []string{}
+	p.m.Lock()
+	for addr, conn := range p.addrConnMap {
+		if time.Since(conn.lastActive) > defaultConnTimeout {
+			addrs = append(addrs, addr)
+		}
+	}
+	p.m.Unlock()
+
+	p.m.Lock()
+	for _, addr := range addrs {
+		delete(p.addrConnMap, addr)
+		logrus.Debugf("client %s is timeout, delete it", addr)
+	}
+	p.m.Unlock()
+}
+
+type udpserver struct {
+	c *net.UDPConn
+
+	curClientID uint32
+	idAddrPool  map[uint32]string
+	idm         sync.Mutex
+
+	connPool *ConnPool
+	clientCh chan *Conn
+}
+
+func (p *udpserver) newClientID() uint32 {
+	p.idm.Lock()
+	defer p.idm.Unlock()
+	for {
+		p.curClientID++
+		if _, ok := p.idAddrPool[p.curClientID]; !ok {
+			return p.curClientID
+		}
+	}
+}
+
+func (p *udpserver) garbageCollection() {
+	for {
+		start := time.Now()
+		p.connPool.GarbageCollection()
+		time.Sleep(10*time.Second - time.Now().Sub(start))
+	}
+}
+
+func (p *udpserver) recv() error {
+	// FIXME!
+	go p.garbageCollection()
+
+	buf := make([]byte, segmentMaxSize)
+	for {
+		n, raddr, err := p.c.ReadFromUDP(buf)
+		// logrus.Info("Read: n, raddr, err = ", n, raddr, err)
+		// fmt.Println("\n" + hex.Dump(buf[0:n]))
+		if err != nil {
+			logrus.Errorf("ReadFromUDP error: %s", err)
+			return err
+		}
+
+		conn, ok := p.connPool.Get(raddr)
+		if !ok {
+			// save new client
+			id := p.newClientID()
+			conn, err = p.connPool.New(p.c, raddr, id)
+			if err != nil {
+				logrus.Errorf("save new client failed: %s", err)
+				// TODO: notice schema
+				seg := newACKSegment([]byte("error: create client conn"))
+				p.c.WriteToUDP(seg.bytes(), raddr)
+				continue
+			}
+			p.clientCh <- conn
+		}
+
+		// handle in
+		if err := conn.handle(buf[0:n]); err != nil {
+			logrus.Errorf("handle msg(from %s) failed: %s", raddr.String(), err)
+		}
+	}
+}
+
+// Accept wait the new client connection incoming
+func (p *udpserver) Accept() (*Conn, error) {
+	return <-p.clientCh, nil
 }
 
 // ClientSocket is a UDP implement of Socket
 type ClientSocket struct {
-	c        *net.UDPConn
-	raddr    *net.UDPAddr
-	cp       *ClientPool
-	clientCh chan *Conn
+	udpserver
+	raddr *net.UDPAddr
 }
 
 // NewClientSocket create a client socket
 func NewClientSocket(conn *net.UDPConn, raddr *net.UDPAddr) (*ClientSocket, *Conn, error) {
 	sock := &ClientSocket{
-		c:        conn,
-		raddr:    raddr,
-		cp:       newClientPool(),
-		clientCh: make(chan *Conn, 1),
+		udpserver: udpserver{
+			c:        conn,
+			connPool: newConnPool(),
+			clientCh: make(chan *Conn, 1),
+		},
+		raddr: raddr,
 	}
 	c, err := sock.handshake() // FIXME! quit?
 	if err != nil {
 		return nil, nil, err
 	}
-	go sock.recvLoop()
+	go sock.pingLoop(c)
+	go sock.recv()
 	return sock, c, nil
 }
 
@@ -512,15 +504,9 @@ func (p *ClientSocket) handshake() (*Conn, error) {
 }
 
 func (p *ClientSocket) _handshake() (*Conn, error) {
-	key := []byte("handshake")
-
 	// send heartbeat and wait
-	seg := &Segment{
-		h: header(make([]byte, headerSize)),
-		b: key,
-	}
-	seg.h.encode(segTypeMsgSYN, 0, 0, 0, 0, md5.Sum(key), uint16(len(key)))
-	_, err := p.c.WriteToUDP(seg.Bytes(), p.raddr)
+	seg := newSYNSegment()
+	_, err := p.c.WriteToUDP(seg.bytes(), p.raddr)
 	if err != nil {
 		logrus.Warnf("handshake: write segment failed: %s", err)
 		return nil, err
@@ -547,109 +533,36 @@ func (p *ClientSocket) _handshake() (*Conn, error) {
 		logrus.Warnf("handshake: segment type is %d, not segTypeMsgSYN(%d)", seg.h.Type(), segTypeMsgSYN)
 		return nil, errors.New("segment type is not segTypeMsgACK")
 	}
-	if !bytes.Equal(seg.b, key) {
+	if string(seg.b) != handshakeKey {
 		logrus.Warnf("handshake: response segment body is mismatch")
 		return nil, errors.New("response segment body is mismatch")
 	}
 
-	// TODO:
-	return p.cp.NewSingle(p.c, p.raddr, seg.h.StreamID())
+	// TODO: check streamID
+	return p.connPool.New(p.c, p.raddr, seg.h.StreamID())
 }
 
-func (p *ClientSocket) recvLoop() error {
-	buf := make([]byte, segmentMaxSize)
+func (p *ClientSocket) pingLoop(c *Conn) {
 	for {
-		n, raddr, err := p.c.ReadFromUDP(buf)
-		// logrus.Info("Read: n, raddr, err = ", n, raddr, err)
-		// fmt.Println("\n" + hex.Dump(buf[0:n]))
-		if err != nil {
-			return err
-		}
-
-		conn, ok := p.cp.GetConn(raddr.String())
-		if !ok {
-			// new client incoming
-			conn, err = p.cp.New(p.c, raddr)
-			if err != nil {
-				logrus.Errorf("create new client conn failed: %s", err)
-				// notice remote endpoint
-				res := []byte("error: create client conn")
-				seg := &Segment{
-					h: header(make([]byte, headerSize)),
-					b: res,
-				}
-				seg.h.encode(segTypeMsgACK, 0, 0, 0, 0, md5.Sum(res), uint16(len(res)))
-				p.c.WriteToUDP(seg.Bytes(), raddr)
-				continue
-			}
-			p.clientCh <- conn
-		}
-
-		// handle in
-		if err := conn.handle(buf[0:n]); err != nil {
-			logrus.Errorf("handle msg(from %s) failed: %s", raddr.String(), err)
-		}
+		c.Ping() // ping timeout
+		time.Sleep(defaultPingInterval)
 	}
-}
-
-func (p *ClientSocket) Accept() (*Conn, error) {
-	return <-p.clientCh, nil
 }
 
 // ServerSocket is a UDP implement of socket
 type ServerSocket struct {
-	c        *net.UDPConn
-	cp       *ClientPool
-	clientCh chan *Conn
+	udpserver
 }
 
 // NewServerSocket create a UDPConn
 func NewServerSocket(conn *net.UDPConn) (*ServerSocket, error) {
 	sock := &ServerSocket{
-		c:        conn,
-		cp:       newClientPool(),
-		clientCh: make(chan *Conn, 1),
+		udpserver{
+			c:        conn,
+			connPool: newConnPool(),
+			clientCh: make(chan *Conn, 1),
+		},
 	}
-	go sock.recvLoop()
+	go sock.recv()
 	return sock, nil
-}
-
-func (p *ServerSocket) recvLoop() error {
-	buf := make([]byte, segmentMaxSize)
-	for {
-		n, raddr, err := p.c.ReadFromUDP(buf)
-		// logrus.Info("Read segment: n, p.raddr, err = ", n, raddr, err)
-		// fmt.Println("\n" + hex.Dump(buf[0:n]))
-		if err != nil {
-			return err
-		}
-
-		conn, ok := p.cp.GetConn(raddr.String())
-		if !ok {
-			// new client incoming
-			conn, err = p.cp.New(p.c, raddr)
-			if err != nil {
-				logrus.Errorf("create new client conn failed: %s", err)
-				// notice remote endpoint
-				res := []byte("error: create client conn")
-				seg := &Segment{
-					h: header(make([]byte, headerSize)),
-					b: res,
-				}
-				seg.h.encode(segTypeMsgACK, 0, 0, 0, 0, md5.Sum(res), uint16(len(res)))
-				p.c.WriteToUDP(seg.Bytes(), raddr)
-				continue
-			}
-			p.clientCh <- conn
-		}
-
-		// handle in
-		if err := conn.handle(buf[0:n]); err != nil {
-			logrus.Errorf("handle msg(from %s) failed: %s", raddr.String(), err)
-		}
-	}
-}
-
-func (p *ServerSocket) Accept() (*Conn, error) {
-	return <-p.clientCh, nil
 }

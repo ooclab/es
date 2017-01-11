@@ -7,8 +7,13 @@ import (
 	"net"
 	"os"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/proto/udp"
 )
+
+func init() {
+	logrus.SetLevel(logrus.DebugLevel)
+}
 
 func main() {
 	addr, err := net.ResolveUDPAddr("udp", os.Args[1])
