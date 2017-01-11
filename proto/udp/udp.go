@@ -31,7 +31,9 @@ var (
 	// ErrTimeout is commont timeout error
 	ErrTimeout = errors.New("timeout")
 	// ErrConnectionShutdown is a chan single of connection shutdown
-	ErrConnectionShutdown  = errors.New("connection is shutdown")
+	ErrConnectionShutdown = errors.New("connection is shutdown")
+	// ErrSegTypeUnknown is the error abount unknown message type
+	ErrSegTypeUnknown      = errors.New("unknown message type")
 	errSegmentChecksum     = errors.New("segment checksum error")
 	errClientExist         = errors.New("client is exist in ClientPool")
 	errSegmentBodyTooLarge = errors.New("segment body is too large")
@@ -177,37 +179,64 @@ func (c *Conn) handle(msg []byte) error {
 
 	switch types {
 	case segTypeMsgSYN:
-		seg = newACKSegment(seg.b) // FIXME!
-		_, err = c.c.WriteToUDP(seg.bytes(), c.raddr)
-		return err
+		err = c.handlePingSYN(seg)
 	case segTypeMsgPingReq:
-		seg = newPingRepSegment(c.id, seg.b)
-		_, err = c.c.WriteToUDP(seg.bytes(), c.raddr)
-		return err
+		err = c.handlePingReq(seg)
 	case segTypeMsgPingRep:
-		// notice ping wait
-		pingID := binary.BigEndian.Uint32(seg.b[0:4])
-		c.pingLock.Lock()
-		ch := c.pings[pingID]
-		if ch != nil {
-			delete(c.pings, pingID)
-			close(ch)
-		}
-		c.pingLock.Unlock()
-		return nil
+		err = c.handlePingRep(seg)
 	case segTypeMsgReceived:
-		// FIXME!
-		transID := seg.h.TransID()
-		if c.sl[transID] != nil {
-			c.sl[transID] = nil
-		} else {
-			logrus.Warnf("no such transID: %d", transID)
-		}
-		return nil
+		err = c.handleReceived(seg)
 	case segTypeMsgReTrans:
-		logrus.Errorf("re trans message have not completed!")
+		err = c.handleReTrans(seg)
+	case segTypeMsgTrans:
+		err = c.handleTrans(seg)
+	default:
+		err = c.handleUnknown(seg)
 	}
 
+	return err
+}
+
+func (c *Conn) handlePingSYN(seg *segment) error {
+	seg = newACKSegment(seg.b) // FIXME!
+	return c.write(seg.bytes())
+}
+
+func (c *Conn) handlePingReq(seg *segment) error {
+	seg = newPingRepSegment(c.id, seg.b)
+	return c.write(seg.bytes())
+}
+
+func (c *Conn) handlePingRep(seg *segment) error {
+	// notice ping wait
+	pingID := binary.BigEndian.Uint32(seg.b[0:4])
+	c.pingLock.Lock()
+	ch := c.pings[pingID]
+	if ch != nil {
+		delete(c.pings, pingID)
+		close(ch)
+	}
+	c.pingLock.Unlock()
+	return nil
+}
+
+func (c *Conn) handleReceived(seg *segment) error {
+	// FIXME!
+	transID := seg.h.TransID()
+	if c.sl[transID] != nil {
+		c.sl[transID] = nil
+	} else {
+		logrus.Warnf("no such transID: %d", transID)
+	}
+	return nil
+}
+
+func (c *Conn) handleReTrans(seg *segment) error {
+	logrus.Errorf("re trans message have not completed!")
+	return nil
+}
+
+func (c *Conn) handleTrans(seg *segment) error {
 	// FIXME!
 	if seg.h.OrderID() == 0 {
 		// signle segment msg
@@ -220,7 +249,7 @@ func (c *Conn) handle(msg []byte) error {
 		recving = newMsgRecving()
 		c.rl[transID] = recving
 	}
-	msg, err = recving.Save(seg)
+	msg, err := recving.Save(seg)
 	if err != nil {
 		return err
 	}
@@ -234,6 +263,11 @@ func (c *Conn) handle(msg []byte) error {
 		return nil // FIXME! error
 	}
 	return nil
+}
+
+func (c *Conn) handleUnknown(seg *segment) error {
+	logrus.Errorf("unknown type segment: %s", seg.h.String())
+	return ErrSegTypeUnknown
 }
 
 // RecvMsg recv a single message
@@ -273,8 +307,7 @@ func (c *Conn) SendMsg(message []byte) error {
 		}
 		b := message[i*segmentBodyMaxSize : end]
 		seg, _ := newSegment(segTypeMsgTrans, 0, c.id, transID, uint16(i+1), b)
-		_, err := c.c.WriteToUDP(seg.bytes(), c.raddr)
-		if err != nil {
+		if err := c.write(seg.bytes()); err != nil {
 			return err
 		}
 		// save to sending
@@ -290,6 +323,11 @@ func (c *Conn) SendMsg(message []byte) error {
 		}
 	}
 	return nil
+}
+
+func (c *Conn) write(b []byte) error {
+	_, err := c.c.WriteToUDP(b, c.raddr)
+	return err
 }
 
 // Ping is used to measure the RTT response time
