@@ -82,7 +82,7 @@ func (m *msgRecving) GetMissing() (uint16, []uint16) {
 	if m.completed {
 		return 0, nil
 	}
-	// exist segment list
+
 	ml := []uint16{}
 	for i := m.nextID; i < m.largestOrderID; i++ {
 		if _, ok := m.saved[i]; !ok {
@@ -97,8 +97,7 @@ func (m *msgRecving) Save(seg *segment) ([]byte, error) {
 	defer m.lock.Unlock()
 
 	oid := seg.h.OrderID()
-	// fmt.Printf("%p: oid = %d, m.nextID = %d, m.readLength = %d, m.needLength = %d, len(m.saved) = %d\n", m, oid, m.nextID, m.readLength, m.needLength, len(m.saved))
-	if oid < m.nextID || m.saved[oid] != nil {
+	if oid < m.nextID || (oid >= m.nextID && m.saved[oid] != nil) {
 		logrus.Warnf("dumplicate segment: %s", seg.h.String())
 		return nil, nil
 	}
@@ -115,6 +114,10 @@ func (m *msgRecving) Save(seg *segment) ([]byte, error) {
 			m.readBuf.Write(seg.b[4:])
 		} else {
 			m.readBuf.Write(seg.b)
+		}
+		// clean current segment
+		if _, ok := m.saved[oid]; ok {
+			delete(m.saved, oid)
 		}
 		for {
 			m.nextID++
@@ -543,7 +546,7 @@ func (c *Conn) SendMsg(message []byte) error {
 
 		if i > 0 {
 			// must query remote endpoint before send message again
-			fmt.Println("-- query remote endpoint: ", i)
+			fmt.Printf("-- query remote endpoint: %d %p\n", i, &sending)
 			status, largestOrderID, missing, err := c.queryMsgReceive(sending)
 			fmt.Println("status, largestOrderID, missing, err = ", status, largestOrderID, missing, err)
 			if err != nil {
