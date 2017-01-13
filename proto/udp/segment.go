@@ -17,9 +17,11 @@ const (
 	segTypeMsgACK      uint8 = 2
 	segTypeMsgPingReq  uint8 = 3
 	segTypeMsgPingRep  uint8 = 4
-	segTypeMsgReceived uint8 = 5
-	segTypeMsgReTrans  uint8 = 6
-	segTypeMsgTrans    uint8 = 7
+	segTypeMsgReq      uint8 = 5
+	segTypeMsgRep      uint8 = 6
+	segTypeMsgReceived uint8 = 7
+	segTypeMsgReTrans  uint8 = 8
+	segTypeMsgTrans    uint8 = 9
 
 	segmentMaxSize     = 1400
 	segmentBodyMaxSize = segmentMaxSize - headerSize // <= MTU
@@ -134,6 +136,16 @@ func newPingReqSegment(streamID uint32, id uint32) *segment {
 
 func newPingRepSegment(streamID uint32, b []byte) *segment {
 	seg, _ := newSegment(segTypeMsgPingRep, 0, streamID, 0, 0, b)
+	return seg
+}
+
+func newReqSegment(streamID uint32, b []byte) *segment {
+	seg, _ := newSegment(segTypeMsgReq, 0, streamID, 0, 0, b)
+	return seg
+}
+
+func newRepSegment(streamID uint32, b []byte) *segment {
+	seg, _ := newSegment(segTypeMsgRep, 0, streamID, 0, 0, b)
 	return seg
 }
 

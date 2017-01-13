@@ -2,11 +2,11 @@ package udp
 
 import (
 	"bytes"
-	"container/heap"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -18,13 +18,23 @@ const (
 	defaultTimeout = 100
 	maxTimeout     = 1600
 
-	defaultConnTranSize = 10
-	defaultConnTimeout  = 30 * time.Second
-	defaultPingInterval = 6 * time.Second
-	defaultPingTimeout  = 3 * time.Second
+	defaultConnTranSize   = 10
+	defaultConnTimeout    = 30 * time.Second
+	defaultPingInterval   = 6 * time.Second
+	defaultPingTimeout    = 3 * time.Second
+	defaultRequestTimeout = 12 * time.Second
+	defaultSendingTimeout = 1 * time.Second
 
 	maxRecvPoolSize = 10
 	maxSendPoolSize = 10
+
+	sendMsgMaxTimes = 99
+
+	// response status
+	responseStatusUnknownType = 0
+	queryReceiveNotExist      = 1
+	queryReceiveCompleted     = 2
+	queryReceiveNotCompleted  = 3
 )
 
 var (
@@ -33,72 +43,105 @@ var (
 	// ErrConnectionShutdown is a chan single of connection shutdown
 	ErrConnectionShutdown = errors.New("connection is shutdown")
 	// ErrSegTypeUnknown is the error abount unknown message type
-	ErrSegTypeUnknown      = errors.New("unknown message type")
+	ErrSegTypeUnknown = errors.New("unknown message type")
+
+	errSendingListFull = errors.New("sending list is full")
+	errRecvingListFull = errors.New("recving list is full")
+
 	errSegmentChecksum     = errors.New("segment checksum error")
 	errClientExist         = errors.New("client is exist in ClientPool")
 	errSegmentBodyTooLarge = errors.New("segment body is too large")
+
+	errTransIDTooLarge = errors.New("transID is larger than defaultConnTranSize")
 )
 
-type segmentHeap []*segment
-
-func (h segmentHeap) Len() int           { return len(h) }
-func (h segmentHeap) Less(i, j int) bool { return h[i].h.OrderID() < h[j].h.OrderID() }
-func (h segmentHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-
-func (h *segmentHeap) Push(x interface{}) {
-	// Push and Pop use pointer receivers because they modify the slice's length,
-	// not just its contents.
-	*h = append(*h, x.(*segment))
-}
-
-func (h *segmentHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
-
 type msgRecving struct {
-	readBuf    bytes.Buffer
-	nid        uint16 // next segment id, start by 1
-	needLength uint32
-	readLength uint32
-	sh         *segmentHeap
-	buf        bytes.Buffer
+	readBuf        bytes.Buffer
+	needLength     uint32
+	readLength     uint32
+	saved          map[uint16]*segment // saved seg
+	nextID         uint16
+	largestOrderID uint16 // the largest order id saved
+
+	// !IMPORTANT! completed is a fag
+	// It means this msgRecving should be take if re trans message incoming and this flag is true
+	completed bool
+	lock      sync.Mutex
 }
 
 func newMsgRecving() *msgRecving {
-	m := &msgRecving{
-		nid: 1,
-		sh:  &segmentHeap{},
+	return &msgRecving{
+		saved: map[uint16]*segment{},
 	}
-	heap.Init(m.sh)
-	return m
+}
+
+func (m *msgRecving) GetMissing() (uint16, []uint16) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	if m.completed {
+		return 0, nil
+	}
+	// exist segment list
+	ml := []uint16{}
+	for i := m.nextID; i < m.largestOrderID; i++ {
+		if _, ok := m.saved[i]; !ok {
+			ml = append(ml, i)
+		}
+	}
+	return m.largestOrderID, ml
 }
 
 func (m *msgRecving) Save(seg *segment) ([]byte, error) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
 	oid := seg.h.OrderID()
-	if oid == m.nid {
-		if oid == 1 {
+	// fmt.Printf("%p: oid = %d, m.nextID = %d, m.readLength = %d, m.needLength = %d, len(m.saved) = %d\n", m, oid, m.nextID, m.readLength, m.needLength, len(m.saved))
+	if oid < m.nextID || m.saved[oid] != nil {
+		logrus.Warnf("dumplicate segment: %s", seg.h.String())
+		return nil, nil
+	}
+
+	m.readLength += uint32(len(seg.b))
+	if m.largestOrderID < oid {
+		m.largestOrderID = oid
+	}
+
+	if oid == m.nextID {
+		if oid == 0 {
 			// FIXME!
 			m.needLength = binary.BigEndian.Uint32(seg.b[0:4])
 			m.readBuf.Write(seg.b[4:])
 		} else {
 			m.readBuf.Write(seg.b)
 		}
-		m.nid++
+		for {
+			m.nextID++
+			v, ok := m.saved[m.nextID]
+			if !ok {
+				break
+			}
+			m.readBuf.Write(v.b)
+			delete(m.saved, m.nextID)
+		}
 	} else {
-		heap.Push(m.sh, seg)
+		m.saved[oid] = seg
 	}
 
-	m.readLength += uint32(len(seg.b))
-
 	// FIXME: need the every seg.len ?
-	if m.needLength > 0 && m.needLength == m.readLength {
-		// read message completed
-		for _, seg := range *m.sh {
-			m.readBuf.Write(seg.b)
+	if m.needLength > 0 && m.needLength <= m.readLength {
+		m.completed = true
+		if len(m.saved) > 0 {
+			// read message completed
+			sl := []uint16{}
+			for k := range m.saved {
+				sl = append(sl, k)
+			}
+			sort.Sort(SIUInt16Slice(sl))
+			for _, orderID := range sl {
+				m.readBuf.Write(m.saved[orderID].b)
+			}
 		}
 		// TODO: cleanup ?
 		return m.readBuf.Bytes(), nil
@@ -107,27 +150,103 @@ func (m *msgRecving) Save(seg *segment) ([]byte, error) {
 	return nil, nil
 }
 
+func (m *msgRecving) IsCompleted() bool {
+	m.lock.Lock()
+	b := m.completed
+	m.lock.Unlock()
+	return b
+}
+
 type msgSending struct {
-	segments []*segment
+	types    uint8
+	flags    uint16
+	streamID uint32
+	transID  uint16
+	message  []byte
 }
 
-func newMsgSending() *msgSending {
-	return &msgSending{}
+func newMsgSending(types uint8, flags uint16, streamID uint32, transID uint16, message []byte) *msgSending {
+	length := len(message)
+	multiHdr := make([]byte, 4)
+	binary.BigEndian.PutUint32(multiHdr, uint32(length+4))
+	message = append(multiHdr, message...)
+
+	return &msgSending{
+		types:    types,
+		flags:    flags,
+		streamID: streamID,
+		transID:  transID,
+		message:  message,
+	}
 }
 
-func (m *msgSending) Save(seg *segment) error {
-	return nil
+func (m *msgSending) segmentCount() uint16 {
+	length := len(m.message)
+	c := length / segmentBodyMaxSize
+	if length%segmentBodyMaxSize != 0 {
+		c++
+	}
+	return uint16(c)
+}
+
+func (m *msgSending) IterBufferd() <-chan *segment {
+	length := len(m.message)
+	sum := int(m.segmentCount())
+	ch := make(chan *segment, sum)
+	go func() {
+		for i := 0; i < sum; i++ {
+			end := (i + 1) * segmentBodyMaxSize
+			if end > length {
+				end = length
+			}
+			b := m.message[i*segmentBodyMaxSize : end]
+			seg, _ := newSegment(m.types, m.flags, m.streamID, m.transID, uint16(i), b)
+			ch <- seg
+		}
+		close(ch)
+	}()
+	return ch
+}
+
+func (m *msgSending) GetSegmentByOrderID(orderID uint16) *segment {
+	start := int(orderID) * segmentBodyMaxSize
+	end := start + segmentBodyMaxSize
+	if end > len(m.message) {
+		end = len(m.message)
+	}
+	b := m.message[start:end]
+	seg, _ := newSegment(m.types, m.flags, m.streamID, m.transID, orderID, b)
+	return seg
 }
 
 // Conn is a UDP implement of es.Conn
 type Conn struct {
-	c          *net.UDPConn
-	raddr      *net.UDPAddr
-	id         uint32
-	rl         []*msgRecving // recving list
-	sl         []*msgSending // sending list
-	lastActive time.Time
-	inbound    chan []byte
+	c     *net.UDPConn
+	raddr *net.UDPAddr
+	id    uint32
+
+	rl      []*msgRecving // recving list
+	rlMutex sync.Mutex
+
+	sl      []*msgSending // sending list
+	slMutex sync.Mutex
+
+	slWait      map[uint16]chan struct{} // wait transID
+	slWaitMutex sync.Mutex
+
+	// wait sending complete single
+	ss      map[uint16]chan struct{}
+	ssMutex sync.Mutex
+
+	lastActiveMutex sync.Mutex
+	lastActive      time.Time
+
+	inbound chan []byte
+
+	// requests is used to send a inner request
+	requests     map[uint32]chan []byte
+	requestID    uint32
+	requestMutex sync.Mutex
 
 	// pings is used to track inflight pings
 	pings    map[uint32]chan struct{}
@@ -144,10 +263,13 @@ func newConn(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) *Conn {
 		id:         id,
 		rl:         make([]*msgRecving, defaultConnTranSize),
 		sl:         make([]*msgSending, defaultConnTranSize),
+		ss:         make(map[uint16]chan struct{}),
 		lastActive: time.Now(),
 		inbound:    make(chan []byte, 1),
 
-		pings: make(map[uint32]chan struct{}),
+		pings:    make(map[uint32]chan struct{}),
+		requests: make(map[uint32]chan []byte),
+		slWait:   make(map[uint16]chan struct{}),
 
 		shutdownCh: make(chan struct{}),
 	}
@@ -167,11 +289,41 @@ func (c *Conn) String() string {
 	return fmt.Sprintf("conn %d: %s(L) -- %s(R)", c.id, c.LocalAddr(), c.RemoteAddr())
 }
 
+func (c *Conn) getRecving(transID uint16) (*msgRecving, error) {
+	if transID >= defaultConnTranSize {
+		return nil, errTransIDTooLarge
+	}
+	c.rlMutex.Lock()
+	recving := c.rl[transID]
+	c.rlMutex.Unlock()
+	return recving, nil
+}
+
+func (c *Conn) setRecving(transID uint16, recving *msgRecving) error {
+	if transID >= defaultConnTranSize {
+		return errTransIDTooLarge
+	}
+	c.rlMutex.Lock()
+	c.rl[transID] = recving
+	c.rlMutex.Unlock()
+	return nil
+}
+
+func (c *Conn) getLastActive() time.Time {
+	c.lastActiveMutex.Lock()
+	lt := c.lastActive
+	c.lastActiveMutex.Unlock()
+	return lt
+}
+
 func (c *Conn) handle(msg []byte) error {
+	c.lastActiveMutex.Lock()
 	c.lastActive = time.Now()
+	c.lastActiveMutex.Unlock()
 
 	seg, err := loadSegment(msg)
 	if err != nil {
+		logrus.Errorf("load segment failed: %s", err)
 		return err
 	}
 
@@ -184,6 +336,10 @@ func (c *Conn) handle(msg []byte) error {
 		err = c.handlePingReq(seg)
 	case segTypeMsgPingRep:
 		err = c.handlePingRep(seg)
+	case segTypeMsgReq:
+		err = c.handleReq(seg)
+	case segTypeMsgRep:
+		err = c.handleRep(seg)
 	case segTypeMsgReceived:
 		err = c.handleReceived(seg)
 	case segTypeMsgReTrans:
@@ -220,14 +376,92 @@ func (c *Conn) handlePingRep(seg *segment) error {
 	return nil
 }
 
+func (c *Conn) handleReq(seg *segment) error {
+	if len(seg.b) < 5 {
+		return errors.New("invalid request messgae")
+	}
+	types := seg.b[4] // FIXME!
+	switch types {
+	case requestTypeQueryReceive:
+		return c.handleReqQueryReceive(seg)
+	default:
+		logrus.Errorf("unknown request types: %d", types)
+		seg, _ = newSegment(segTypeMsgRep, 0, seg.h.StreamID(), 0, 0, []byte{responseStatusUnknownType})
+		c.write(seg.bytes())
+		return errRequestUnknwonType
+	}
+}
+
+// handleReqQueryReceive query recving status of the specified msg
+func (c *Conn) handleReqQueryReceive(seg *segment) error {
+	transID := seg.h.TransID()
+	recving, err := c.getRecving(transID)
+	if err != nil {
+		return err
+	}
+	if recving == nil {
+		return c.responseQueryReceive(seg, queryReceiveNotExist)
+	}
+	if recving.IsCompleted() {
+		return c.responseQueryReceive(seg, queryReceiveCompleted)
+	}
+
+	// not completed
+	largestOrderID, missingOrderIDList := recving.GetMissing()
+
+	// !IMPORTANT! segment size limit!
+	max := len(missingOrderIDList)
+	if max > (segmentBodyMaxSize-7)/2 {
+		max = (segmentBodyMaxSize - 7) / 2
+	}
+	if max > 100 {
+		max = 100 // test
+	}
+
+	b := make([]byte, 7+max*2)
+	copy(b[0:4], seg.b[0:4])
+	b[4] = queryReceiveNotCompleted
+	binary.BigEndian.PutUint16(b[5:7], largestOrderID)
+	for i := 0; i < max; i++ {
+		binary.BigEndian.PutUint16(b[7+i*2:7+i*2+2], missingOrderIDList[i])
+	}
+	seg, _ = newSegment(segTypeMsgRep, 0, c.id, transID, 0, b)
+	return c.write(seg.bytes())
+}
+
+func (c *Conn) responseQueryReceive(seg *segment, status uint8) error {
+	b := make([]byte, 5)
+	copy(b[0:4], seg.b[0:4])
+	b[4] = status
+	seg, _ = newSegment(segTypeMsgRep, 0, c.id, seg.h.TransID(), 0, b)
+	return c.write(seg.bytes())
+}
+
+func (c *Conn) handleRep(seg *segment) error {
+	// notice ping wait
+	requestID := binary.BigEndian.Uint32(seg.b[0:4])
+	c.requestMutex.Lock()
+	ch := c.requests[requestID]
+	if ch != nil {
+		// add timeout!
+		ch <- seg.b[4:]
+		delete(c.requests, requestID)
+		close(ch)
+	}
+	c.requestMutex.Unlock()
+	return nil
+}
+
 func (c *Conn) handleReceived(seg *segment) error {
 	// FIXME!
 	transID := seg.h.TransID()
-	if c.sl[transID] != nil {
-		c.sl[transID] = nil
-	} else {
-		logrus.Warnf("no such transID: %d", transID)
+	c.slWaitMutex.Lock()
+	ch := c.slWait[transID]
+	if ch != nil {
+		delete(c.slWait, transID)
+		close(ch)
 	}
+	c.slWaitMutex.Unlock()
 	return nil
 }
 
@@ -237,17 +471,15 @@ func (c *Conn) handleReTrans(seg *segment) error {
 }
 
 func (c *Conn) handleTrans(seg *segment) error {
-	// FIXME!
-	if seg.h.OrderID() == 0 {
-		// signle segment msg
-		c.inbound <- seg.b
-		return nil
-	}
 	transID := seg.h.TransID()
-	recving := c.rl[transID]
-	if recving == nil {
+	recving, err := c.getRecving(transID)
+	if err != nil {
+		return err
+	}
+	// !IMPORTANT! recving.completed
+	if recving == nil || recving.IsCompleted() {
 		recving = newMsgRecving()
-		c.rl[transID] = recving
+		c.setRecving(transID, recving)
 	}
 	msg, err := recving.Save(seg)
 	if err != nil {
@@ -255,12 +487,9 @@ func (c *Conn) handleTrans(seg *segment) error {
 	}
 	if msg != nil {
 		c.inbound <- msg
-		// cleanup
-		c.rl[transID] = nil
 		// send msg received
 		seg, _ := newSegment(segTypeMsgReceived, 0, c.id, transID, 0, nil)
-		c.c.WriteToUDP(seg.bytes(), c.raddr)
-		return nil // FIXME! error
+		return c.write(seg.bytes())
 	}
 	return nil
 }
@@ -284,45 +513,141 @@ func (c *Conn) SendMsg(message []byte) error {
 		return errors.New("empty message")
 	}
 
-	// signle segment
-	if length <= segmentBodyMaxSize {
-		seg, _ := newSegment(segTypeMsgTrans, 0, c.id, 0, 0, message)
-		_, err := c.c.WriteToUDP(seg.bytes(), c.raddr)
-		return err
+	// TODO: timeout
+	// get sending stor
+	var sending *msgSending
+	for {
+		c.slMutex.Lock()
+		for i, v := range c.sl {
+			if v == nil {
+				sending = newMsgSending(segTypeMsgTrans, 0, c.id, uint16(i), message)
+				c.sl[i] = sending
+				defer func() { c.sl[i] = nil }() // FIXME!
+				break
+			}
+		}
+		c.slMutex.Unlock()
+		if sending != nil {
+			break
+		}
+		fmt.Println("wait transID")
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	// multi segments
+	ch := make(chan struct{})
+	c.slWaitMutex.Lock()
+	c.slWait[sending.transID] = ch
+	c.slWaitMutex.Unlock()
 
-	// TODO: pack header
-	multiHdr := make([]byte, 4)
-	binary.BigEndian.PutUint32(multiHdr, uint32(length+4))
-	message = append(multiHdr, message...)
-	length = len(message)
+	for i := 0; i < sendMsgMaxTimes; i++ {
 
-	transID := uint16(0)
-	for i := 0; i <= (length / segmentBodyMaxSize); i++ {
-		end := (i + 1) * segmentBodyMaxSize
-		if end > length {
-			end = length
+		if i > 0 {
+			// must query remote endpoint before send message again
+			fmt.Println("-- query remote endpoint: ", i)
+			status, largestOrderID, missing, err := c.queryMsgReceive(sending)
+			fmt.Println("status, largestOrderID, missing, err = ", status, largestOrderID, missing, err)
+			if err != nil {
+				return err // FIXME!
+			}
+			if status == queryReceiveCompleted {
+				return nil
+			}
+			if status == queryReceiveNotCompleted {
+				maxOrderID := sending.segmentCount() - 1
+				// handle missing
+				for _, orderID := range missing {
+					if orderID > maxOrderID {
+						logrus.Error("SHOULD NOT: seg is null: ", orderID, len(sending.message))
+						return errors.New("orderID is too large")
+					}
+					seg := sending.GetSegmentByOrderID(orderID)
+					c.write(seg.bytes())
+				}
+				// handle largestOrderID
+				for orderID := largestOrderID + 1; orderID <= maxOrderID; orderID++ {
+					seg := sending.GetSegmentByOrderID(orderID)
+					c.write(seg.bytes())
+				}
+				goto WAIT
+			}
 		}
-		b := message[i*segmentBodyMaxSize : end]
-		seg, _ := newSegment(segTypeMsgTrans, 0, c.id, transID, uint16(i+1), b)
-		if err := c.write(seg.bytes()); err != nil {
-			return err
+
+		// sending full message
+		for seg := range sending.IterBufferd() {
+			if err := c.write(seg.bytes()); err != nil {
+				return err
+			}
 		}
-		// save to sending
-		sending := c.sl[transID]
-		if sending == nil {
-			sending = newMsgSending()
-			c.sl[transID] = sending
-		}
-		if err := sending.Save(seg); err != nil {
-			// cleanup
-			c.sl[transID] = nil
-			return err
+
+	WAIT:
+		// waiting message received success
+		select {
+		case <-ch:
+			return nil
+		case <-time.After(defaultSendingTimeout):
+		case <-c.shutdownCh:
+			return ErrConnectionShutdown
 		}
 	}
-	return nil
+
+	// clean
+	c.slWaitMutex.Lock()
+	delete(c.slWait, sending.transID)
+	c.slWaitMutex.Unlock()
+
+	return ErrTimeout
+}
+
+func (c *Conn) queryMsgReceive(s *msgSending) (status uint8, largestOrderID uint16, missing []uint16, err error) {
+	id, ch := c.genRequestIDChan()
+	b := make([]byte, 5)
+	binary.BigEndian.PutUint32(b[0:4], id)
+	b[4] = requestTypeQueryReceive
+	seg, _ := newSegment(segTypeMsgReq, s.flags, c.id, s.transID, 0, b)
+
+	for i := 0; i < 99; i++ {
+
+		if err = c.write(seg.bytes()); err != nil {
+			logrus.Errorf("queryMsgReceive: write segment failed: %s", err)
+			return
+		}
+
+		// Wait for a response
+		select {
+		case res := <-ch:
+			status = res[0]
+			if status == queryReceiveCompleted || status == queryReceiveNotExist {
+				return
+			}
+			// not completed
+			if len(res) < 3 {
+				err = errors.New("no completed need more than 3 bytes")
+				return
+			}
+			largestOrderID = binary.BigEndian.Uint16(res[1:3])
+			missing = []uint16{}
+			for j := 0; j < (len(res)-3)/2; j++ {
+				orderID := binary.BigEndian.Uint16(res[3+j*2 : 3+j*2+2])
+				missing = append(missing, orderID)
+			}
+			return // success
+		case <-time.After(1000 * time.Millisecond):
+			continue // retry
+		case <-time.After(defaultRequestTimeout):
+			c.requestMutex.Lock()
+			delete(c.requests, id)
+			c.requestMutex.Unlock()
+			close(ch)
+			err = ErrTimeout
+			return
+		case <-c.shutdownCh:
+			err = ErrConnectionShutdown
+			return
+		}
+	}
+
+	err = errors.New("query try many times")
+	return
 }
 
 func (c *Conn) write(b []byte) error {
@@ -362,27 +687,97 @@ func (c *Conn) Ping() (time.Duration, error) {
 	return time.Now().Sub(start), nil
 }
 
+func (c *Conn) genRequestIDChan() (id uint32, ch chan []byte) {
+	ch = make(chan []byte)
+
+	// Get a new request id, mark as pending
+	c.requestMutex.Lock()
+	for {
+		c.requestID++
+		if _, ok := c.requests[c.requestID]; !ok {
+			break
+		}
+	}
+	id = c.requestID
+	c.requests[id] = ch
+	c.requestMutex.Unlock()
+	return id, ch
+}
+
+// request send a request to remote endpoint, and wait the response
+func (c *Conn) request(msg []byte) ([]byte, error) {
+	id, ch := c.genRequestIDChan()
+
+	// Send the request
+	hdr := make([]byte, 4)
+	binary.BigEndian.PutUint32(hdr, id)
+	msg = append(hdr, msg...)
+
+	seg := newReqSegment(c.id, msg)
+	c.c.WriteToUDP(seg.bytes(), c.raddr)
+
+	// Wait for a response
+	select {
+	case rmsg := <-ch:
+		return rmsg, nil
+	case <-time.After(defaultRequestTimeout):
+		c.requestMutex.Lock()
+		delete(c.requests, id)
+		c.requestMutex.Unlock()
+		return nil, ErrTimeout
+	case <-c.shutdownCh:
+		return nil, ErrConnectionShutdown
+	}
+}
+
 // Close close this connection
 func (c *Conn) Close() error {
 	logrus.Warnf("close is not completed")
 	return nil
 }
 
-// ConnPool manage all connections
-type ConnPool struct {
-	addrConnMap map[string]*Conn
-	m           sync.Mutex
+type clientPool struct {
+	nextClientID uint32
+	idAddrMap    map[uint32]string
+	m            *sync.Mutex
 }
 
-func newConnPool() *ConnPool {
-	return &ConnPool{
+func newClientPool() *clientPool {
+	return &clientPool{
+		nextClientID: 1,
+		idAddrMap:    map[uint32]string{},
+		m:            &sync.Mutex{},
+	}
+}
+
+func (p *clientPool) newClientID() (id uint32) {
+	p.m.Lock()
+	for {
+		id = p.nextClientID
+		p.nextClientID++
+		if _, ok := p.idAddrMap[id]; !ok {
+			break
+		}
+	}
+	p.m.Unlock()
+	return
+}
+
+// connPool manage all connections
+type connPool struct {
+	addrConnMap map[string]*Conn
+	m           *sync.Mutex
+}
+
+func newConnPool() *connPool {
+	return &connPool{
 		addrConnMap: map[string]*Conn{},
-		m:           sync.Mutex{},
+		m:           &sync.Mutex{},
 	}
 }
 
 // Get get the connection specified by address string
-func (p *ConnPool) Get(addr net.Addr) (*Conn, bool) {
+func (p *connPool) Get(addr net.Addr) (*Conn, bool) {
 	p.m.Lock()
 	c, ok := p.addrConnMap[addr.String()]
 	p.m.Unlock()
@@ -390,7 +785,7 @@ func (p *ConnPool) Get(addr net.Addr) (*Conn, bool) {
 }
 
 // New create a special single connection
-func (p *ConnPool) New(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) (*Conn, error) {
+func (p *connPool) New(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) (*Conn, error) {
 	addr := raddr.String()
 	p.m.Lock()
 	_, ok := p.addrConnMap[addr]
@@ -406,7 +801,7 @@ func (p *ConnPool) New(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) (*Conn,
 }
 
 // Delete remove a conn from client pool
-func (p *ConnPool) Delete(conn *Conn) error {
+func (p *connPool) Delete(conn *Conn) error {
 	p.m.Lock()
 	defer p.m.Unlock()
 	addr := conn.raddr.String()
@@ -418,11 +813,11 @@ func (p *ConnPool) Delete(conn *Conn) error {
 }
 
 // GarbageCollection delete the disconnected clients
-func (p *ConnPool) GarbageCollection() {
+func (p *connPool) GarbageCollection() {
 	addrs := []string{}
 	p.m.Lock()
 	for addr, conn := range p.addrConnMap {
-		if time.Since(conn.lastActive) > defaultConnTimeout {
+		if time.Since(conn.getLastActive()) > defaultConnTimeout {
 			addrs = append(addrs, addr)
 		}
 	}
@@ -439,23 +834,10 @@ func (p *ConnPool) GarbageCollection() {
 type udpserver struct {
 	c *net.UDPConn
 
-	curClientID uint32
-	idAddrPool  map[uint32]string
-	idm         sync.Mutex
+	clients  *clientPool
+	connPool *connPool
 
-	connPool *ConnPool
 	clientCh chan *Conn
-}
-
-func (p *udpserver) newClientID() uint32 {
-	p.idm.Lock()
-	defer p.idm.Unlock()
-	for {
-		p.curClientID++
-		if _, ok := p.idAddrPool[p.curClientID]; !ok {
-			return p.curClientID
-		}
-	}
 }
 
 func (p *udpserver) garbageCollection() {
@@ -483,7 +865,7 @@ func (p *udpserver) recv() error {
 		conn, ok := p.connPool.Get(raddr)
 		if !ok {
 			// save new client
-			id := p.newClientID()
+			id := p.clients.newClientID()
 			conn, err = p.connPool.New(p.c, raddr, id)
 			if err != nil {
 				logrus.Errorf("save new client failed: %s", err)
@@ -518,6 +900,7 @@ func NewClientSocket(conn *net.UDPConn, raddr *net.UDPAddr) (*ClientSocket, *Con
 	sock := &ClientSocket{
 		udpserver: udpserver{
 			c:        conn,
+			clients:  newClientPool(),
 			connPool: newConnPool(),
 			clientCh: make(chan *Conn, 1),
 		},
@@ -595,8 +978,9 @@ type ServerSocket struct {
 // NewServerSocket create a UDPConn
 func NewServerSocket(conn *net.UDPConn) (*ServerSocket, error) {
 	sock := &ServerSocket{
-		udpserver{
+		udpserver: udpserver{
 			c:        conn,
+			clients:  newClientPool(),
 			connPool: newConnPool(),
 			clientCh: make(chan *Conn, 1),
 		},
