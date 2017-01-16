@@ -763,7 +763,7 @@ func (c *Conn) request(msg []byte) ([]byte, error) {
 
 // Close close this connection
 func (c *Conn) Close() error {
-	logrus.Warnf("close is not completed")
+	// FIXME: close is not completed
 	close(c.shutdownCh)
 	// close(c.inbound)
 	return nil
@@ -972,6 +972,7 @@ func (p *ClientSocket) _handshake() (*Conn, error) {
 	// read
 	n, raddr, err := p.c.ReadFromUDP(buf)
 	if raddr.String() != p.raddr.String() {
+		logrus.Debugf("p.raddr.String() = %s, raddr.String() = %s", p.raddr.String(), raddr.String())
 		logrus.Warnf("unknown from addr: %s", raddr.String())
 	}
 	if err != nil {
