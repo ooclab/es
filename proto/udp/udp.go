@@ -3,9 +3,11 @@ package udp
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -17,6 +19,8 @@ const (
 	numRetransmit  = 9
 	defaultTimeout = 100
 	maxTimeout     = 1600
+
+	defaultSendWindowSize = 1024
 
 	defaultConnTranSize   = 10
 	defaultConnTimeout    = 30 * time.Second
@@ -132,7 +136,7 @@ func (m *msgRecving) Save(seg *segment) ([]byte, error) {
 		m.saved[oid] = seg
 	}
 
-	// FIXME: need the every seg.len ?
+	// FIXME: readLength is enough?
 	if m.needLength > 0 && m.needLength <= m.readLength {
 		m.completed = true
 		if len(m.saved) > 0 {
@@ -417,8 +421,8 @@ func (c *Conn) handleReqQueryReceive(seg *segment) error {
 	if max > (segmentBodyMaxSize-7)/2 {
 		max = (segmentBodyMaxSize - 7) / 2
 	}
-	if max > 100 {
-		max = 100 // test
+	if max > defaultSendWindowSize {
+		max = defaultSendWindowSize // FIXME! test
 	}
 
 	b := make([]byte, 7+max*2)
@@ -484,6 +488,7 @@ func (c *Conn) handleTrans(seg *segment) error {
 		recving = newMsgRecving()
 		c.setRecving(transID, recving)
 	}
+	// fmt.Printf("%p recving: nextID = %d, transID = %d, orderID = %d, %s\n", recving, recving.nextID, transID, seg.h.OrderID(), hex.EncodeToString(seg.h.Checksum()[:]))
 	msg, err := recving.Save(seg)
 	if err != nil {
 		return err
@@ -506,6 +511,16 @@ func (c *Conn) handleUnknown(seg *segment) error {
 func (c *Conn) RecvMsg() ([]byte, error) {
 	// TODO: timeout
 	msg := <-c.inbound
+	filename := fmt.Sprintf("%d.recv", len(msg))
+	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		logrus.Errorf("open %s failed: %s", filename, err)
+	}
+	defer f.Close()
+	sending := newMsgSending(0, 0, 0, 0, msg)
+	for seg := range sending.IterBufferd() {
+		fmt.Fprintf(f, "%d: %5d %s\n", seg.h.OrderID(), seg.h.Length(), hex.EncodeToString(seg.h.Checksum()[:]))
+	}
 	return msg, nil
 }
 
@@ -516,6 +531,12 @@ func (c *Conn) SendMsg(message []byte) error {
 		return errors.New("empty message")
 	}
 
+	filename := fmt.Sprintf("%d.send", len(message))
+	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		logrus.Errorf("open %s failed: %s", filename, err)
+	}
+	defer f.Close()
 	// TODO: timeout
 	// get sending stor
 	var sending *msgSending
@@ -541,14 +562,17 @@ func (c *Conn) SendMsg(message []byte) error {
 	c.slWaitMutex.Lock()
 	c.slWait[sending.transID] = ch
 	c.slWaitMutex.Unlock()
+	var remain int
 
-	for i := 0; i < sendMsgMaxTimes; i++ {
-
-		if i > 0 {
+	for i := 0; i < sendMsgMaxTimes; {
+	QUERY:
+		i++
+		remain = defaultSendWindowSize
+		if i > 1 {
 			// must query remote endpoint before send message again
-			fmt.Printf("-- query remote endpoint: %d %p\n", i, &sending)
+			// fmt.Printf("-- query remote endpoint: %d %p\n", i, &sending)
 			status, largestOrderID, missing, err := c.queryMsgReceive(sending)
-			fmt.Println("status, largestOrderID, missing, err = ", status, largestOrderID, missing, err)
+			// fmt.Println("status, largestOrderID, missing, err = ", status, largestOrderID, missing, err)
 			if err != nil {
 				return err // FIXME!
 			}
@@ -565,11 +589,18 @@ func (c *Conn) SendMsg(message []byte) error {
 					}
 					seg := sending.GetSegmentByOrderID(orderID)
 					c.write(seg.bytes())
+					fmt.Fprintf(f, "missing: %d: %5d %s\n", seg.h.OrderID(), seg.h.Length(), hex.EncodeToString(seg.h.Checksum()[:]))
+					remain--
 				}
 				// handle largestOrderID
 				for orderID := largestOrderID + 1; orderID <= maxOrderID; orderID++ {
+					if remain <= 0 {
+						goto QUERY
+					}
 					seg := sending.GetSegmentByOrderID(orderID)
 					c.write(seg.bytes())
+					fmt.Fprintf(f, "largestOrderID: %d: %5d %s\n", seg.h.OrderID(), seg.h.Length(), hex.EncodeToString(seg.h.Checksum()[:]))
+					remain--
 				}
 				goto WAIT
 			}
@@ -577,9 +608,14 @@ func (c *Conn) SendMsg(message []byte) error {
 
 		// sending full message
 		for seg := range sending.IterBufferd() {
+			if remain <= 0 {
+				goto QUERY
+			}
 			if err := c.write(seg.bytes()); err != nil {
 				return err
 			}
+			fmt.Fprintf(f, "full: %d: %5d %s\n", seg.h.OrderID(), seg.h.Length(), hex.EncodeToString(seg.h.Checksum()[:]))
+			remain--
 		}
 
 	WAIT:
