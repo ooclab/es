@@ -161,7 +161,10 @@ func newSingleSegment(segType uint8, flags uint16, streamID uint32, message []by
 func loadSegment(data []byte) (*segment, error) {
 	hdr := header(make([]byte, headerSize))
 	copy(hdr, data[0:headerSize])
-	seg := &segment{h: hdr, b: data[headerSize:]}
+	// !IMPORTANT! must copy data!
+	b := make([]byte, len(data)-headerSize)
+	copy(b, data[headerSize:])
+	seg := &segment{h: hdr, b: b}
 	if hdr.Length() == 0 {
 		return seg, nil // FIXME!
 	}
