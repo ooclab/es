@@ -515,8 +515,13 @@ func (c *Conn) handleUnknown(seg *segment) error {
 // RecvMsg recv a single message
 func (c *Conn) RecvMsg() ([]byte, error) {
 	// TODO: timeout
-	msg := <-c.inbound
-	return msg, nil
+	// Wait for a response
+	select {
+	case msg := <-c.inbound:
+		return msg, nil
+	case <-c.shutdownCh:
+		return nil, ErrConnectionShutdown
+	}
 }
 
 // SendMsg send a single message
@@ -759,6 +764,8 @@ func (c *Conn) request(msg []byte) ([]byte, error) {
 // Close close this connection
 func (c *Conn) Close() error {
 	logrus.Warnf("close is not completed")
+	close(c.shutdownCh)
+	// close(c.inbound)
 	return nil
 }
 
@@ -851,6 +858,7 @@ func (p *connPool) GarbageCollection() {
 
 	p.m.Lock()
 	for _, addr := range addrs {
+		p.addrConnMap[addr].Close() // FIXME!
 		delete(p.addrConnMap, addr)
 		logrus.Debugf("client %s is timeout, delete it", addr)
 	}

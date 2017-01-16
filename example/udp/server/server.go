@@ -42,6 +42,8 @@ func main() {
 		}
 		fmt.Println("accept client: ", conn)
 		go func() {
+			fmt.Println("start client recv: ", conn)
+			defer func() { fmt.Println("quit conn: ", conn) }()
 			for {
 				msg, err := conn.RecvMsg()
 				if err != nil {
