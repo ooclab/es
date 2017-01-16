@@ -20,6 +20,8 @@ const (
 
 	// TODO: sendWindowSize should changed dynamically
 	defaultSendWindowSize = 64
+	minSendWindowSize     = 8
+	maxSendWindowSize     = 1024
 
 	defaultConnTranSize   = 10
 	defaultConnTimeout    = 30 * time.Second
@@ -95,6 +97,7 @@ func (m *msgRecving) GetMissing() (uint16, []uint16) {
 	return m.largestOrderID, ml
 }
 
+// TODO: should return a number to determine missing segment grade, maybe oid-m.nextID ?
 func (m *msgRecving) Save(seg *segment) ([]byte, error) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
@@ -243,6 +246,7 @@ type Conn struct {
 	// wait sending complete single
 	ss      map[uint16]chan struct{}
 	ssMutex sync.Mutex
+	sws     int // the max segment in a sending loop
 
 	lastActiveMutex sync.Mutex
 	lastActive      time.Time
@@ -270,6 +274,7 @@ func newConn(conn *net.UDPConn, raddr *net.UDPAddr, id uint32) *Conn {
 		rl:         make([]*msgRecving, defaultConnTranSize),
 		sl:         make([]*msgSending, defaultConnTranSize),
 		ss:         make(map[uint16]chan struct{}),
+		sws:        defaultSendWindowSize,
 		lastActive: time.Now(),
 		inbound:    make(chan []byte, 1),
 
@@ -420,8 +425,8 @@ func (c *Conn) handleReqQueryReceive(seg *segment) error {
 	if max > (segmentBodyMaxSize-7)/2 {
 		max = (segmentBodyMaxSize - 7) / 2
 	}
-	if max > defaultSendWindowSize {
-		max = defaultSendWindowSize // FIXME! test
+	if max > c.sws {
+		max = c.sws // FIXME! test
 	}
 
 	b := make([]byte, 7+max*2)
@@ -498,6 +503,7 @@ func (c *Conn) handleTrans(seg *segment) error {
 		seg, _ := newSegment(segTypeMsgReceived, 0, c.id, transID, 0, nil)
 		return c.write(seg.bytes())
 	}
+	// TODO: recving.Save() should return a grade for change remote sws(Sending Window Size)!
 	return nil
 }
 
@@ -550,7 +556,7 @@ func (c *Conn) SendMsg(message []byte) error {
 	for i := 0; i < sendMsgMaxTimes; {
 	QUERY:
 		i++
-		remain = defaultSendWindowSize
+		remain = c.sws
 		if i > 1 {
 			// must query remote endpoint before send message again
 			status, largestOrderID, missing, err := c.queryMsgReceive(sending)
