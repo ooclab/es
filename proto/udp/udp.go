@@ -18,7 +18,8 @@ const (
 	defaultTimeout = 100
 	maxTimeout     = 1600
 
-	defaultSendWindowSize = 1024
+	// TODO: sendWindowSize should changed dynamically
+	defaultSendWindowSize = 64
 
 	defaultConnTranSize   = 10
 	defaultConnTimeout    = 30 * time.Second
@@ -563,6 +564,9 @@ func (c *Conn) SendMsg(message []byte) error {
 				maxOrderID := sending.segmentCount() - 1
 				// handle missing
 				for _, orderID := range missing {
+					if remain <= 0 {
+						goto QUERY
+					}
 					if orderID > maxOrderID {
 						logrus.Error("SHOULD NOT: seg is null: ", orderID, len(sending.message))
 						return errors.New("orderID is too large")

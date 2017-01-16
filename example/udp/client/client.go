@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/proto/udp"
@@ -46,26 +47,38 @@ func main() {
 	}
 	fmt.Println("sock = ", sock)
 
-	maxSize := 1024 * 512
+	maxSize := 1024 * 1024 * 16
+	var start time.Time
+	var t time.Duration
+	var speed float64
 	for j := 0; j < 1; j++ {
 		for i := 2; i <= maxSize; i = i * 2 {
 			b := make([]byte, i+1)
 			rand.Read(b)
 			sc := md5.Sum(b)
+
+			// Send
+			start = time.Now()
 			if err := clientConn.SendMsg(b); err != nil {
 				logrus.Errorf("SendMsg failed: %s", err)
 				break
 			}
-			fmt.Printf("%9d --> send %s\n", len(b), hex.EncodeToString(sc[:]))
+			t = time.Since(start)
+			speed = (float64(i+1) / t.Seconds()) / (1024 * 1024)
+			fmt.Printf("%9d --> send %s %16s %16f M/s\n", len(b), hex.EncodeToString(sc[:]), t, speed)
+
 			msg, err := clientConn.RecvMsg()
 			if err != nil {
 				logrus.Errorf("RecvMsg failed: %s", err)
 				break
 			}
-			rc := md5.Sum(msg)
-			fmt.Printf("%9d <-- recv %s\n", len(msg), hex.EncodeToString(rc[:]))
+
+			// Recv
+			// rc := md5.Sum(msg)
+			// fmt.Printf("%9d <-- recv %s\n", len(msg), hex.EncodeToString(rc[:]))
 			if md5.Sum(msg) != sc {
 				logrus.Errorf("msg is mismatch")
+				break
 			}
 		}
 	}

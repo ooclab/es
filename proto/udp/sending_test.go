@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	maxMsgSize = 1024 * 1024 * 4
+	maxMsgSize = 1024 * 1024 * 16
 )
 
 func Test_msgSending_IterBufferd(t *testing.T) {
