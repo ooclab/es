@@ -868,8 +868,8 @@ func (p *udpserver) recv() error {
 	// FIXME!
 	go p.garbageCollection()
 
-	buf := make([]byte, segmentMaxSize)
 	for {
+		buf := make([]byte, segmentMaxSize)
 		n, raddr, err := p.c.ReadFromUDP(buf)
 		// logrus.Info("Read: n, raddr, err = ", n, raddr, err)
 		// fmt.Println("\n" + hex.Dump(buf[0:n]))
