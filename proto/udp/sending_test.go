@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-const (
-	maxMsgSize = 1024 * 1024 * 16
-)
-
 func Test_msgSending_IterBufferd(t *testing.T) {
 	for length := 2; length <= maxMsgSize; length *= 2 {
 		b := make([]byte, length+1)

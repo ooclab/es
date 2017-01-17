@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,12 +29,13 @@ const (
 	defaultPingInterval   = 6 * time.Second
 	defaultPingTimeout    = 3 * time.Second
 	defaultRequestTimeout = 12 * time.Second
-	defaultSendingTimeout = 1 * time.Second
+	defaultSendingTimeout = 60 * time.Second // FIXME!
 
 	maxRecvPoolSize = 10
 	maxSendPoolSize = 10
 
-	sendMsgMaxTimes = 99
+	sendMsgMaxTimes = 999              // FIXME!
+	maxMsgSize      = 1024 * 1024 * 16 // 16M
 
 	// response status
 	responseStatusUnknownType = 0
@@ -498,7 +500,7 @@ func (c *Conn) handleTrans(seg *segment) error {
 		return err
 	}
 	if msg != nil {
-		c.inbound <- msg
+		go func() { c.inbound <- msg }() // FIXME!! do not lock at here!
 		// send msg received
 		seg, _ := newSegment(segTypeMsgReceived, 0, c.id, transID, 0, nil)
 		return c.write(seg.bytes())
@@ -629,6 +631,41 @@ func (c *Conn) SendMsg(message []byte) error {
 	return ErrTimeout
 }
 
+func (c *Conn) Read(p []byte) (n int, err error) {
+	msg, err := c.RecvMsg()
+	if err == nil {
+		copy(p, msg)
+	}
+	return len(msg), err
+}
+
+func (c *Conn) Write(p []byte) (n int, err error) {
+	if len(p) <= maxMsgSize {
+		err = c.SendMsg(p)
+		if err != nil {
+			return
+		}
+		return len(p), nil
+	}
+
+	total := len(p)
+	var start, end, read int
+	for start < total {
+		end += maxMsgSize
+		if end >= total {
+			end = total
+		}
+		err = c.SendMsg(p[start:end])
+		if err != nil {
+			return read, err
+		}
+
+		n += (end - start)
+		start = end
+	}
+	return read, nil
+}
+
 func (c *Conn) queryMsgReceive(s *msgSending) (status uint8, largestOrderID uint16, missing []uint16, err error) {
 	id, ch := c.genRequestIDChan()
 	b := make([]byte, 5)
@@ -636,8 +673,7 @@ func (c *Conn) queryMsgReceive(s *msgSending) (status uint8, largestOrderID uint
 	b[4] = requestTypeQueryReceive
 	seg, _ := newSegment(segTypeMsgReq, s.flags, c.id, s.transID, 0, b)
 
-	for i := 0; i < 99; i++ {
-
+	for i := 0; i < 999; i++ {
 		if err = c.write(seg.bytes()); err != nil {
 			logrus.Errorf("queryMsgReceive: write segment failed: %s", err)
 			return
@@ -664,6 +700,7 @@ func (c *Conn) queryMsgReceive(s *msgSending) (status uint8, largestOrderID uint
 			return // success
 		case <-time.After(1000 * time.Millisecond):
 			continue // retry
+			// FIXME! just one time.After
 		case <-time.After(defaultRequestTimeout):
 			c.requestMutex.Lock()
 			delete(c.requests, id)
@@ -872,6 +909,8 @@ type udpserver struct {
 	connPool *connPool
 
 	clientCh chan *Conn
+
+	closed bool
 }
 
 func (p *udpserver) garbageCollection() {
@@ -889,9 +928,16 @@ func (p *udpserver) recv() error {
 	buf := make([]byte, segmentMaxSize)
 	for {
 		n, raddr, err := p.c.ReadFromUDP(buf)
-		// logrus.Info("Read: n, raddr, err = ", n, raddr, err)
-		// fmt.Println("\n" + hex.Dump(buf[0:n]))
 		if err != nil {
+			if p.closed {
+				return nil
+			}
+			// FIXME!
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				logrus.Debugf("conn is closed, quit recv()")
+				p.closed = true
+				return nil
+			}
 			logrus.Errorf("ReadFromUDP error: %s", err)
 			return err
 		}
@@ -921,6 +967,16 @@ func (p *udpserver) recv() error {
 // Accept wait the new client connection incoming
 func (p *udpserver) Accept() (*Conn, error) {
 	return <-p.clientCh, nil
+}
+
+// TODO: add lock
+func (p *udpserver) Close() error {
+	if p.closed {
+		return nil
+	}
+
+	p.closed = true
+	return nil
 }
 
 // ClientSocket is a UDP implement of Socket

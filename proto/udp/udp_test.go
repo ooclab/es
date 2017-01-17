@@ -55,8 +55,8 @@ func runServer(quit chan struct{}) (net.Addr, error) {
 						fmt.Printf("recv msg failed: %s\n", err)
 						return
 					}
-					// rc := md5.Sum(msg)
-					// fmt.Printf("%9d <-- recv %s\n", len(msg), hex.EncodeToString(rc[:]))
+					rc := md5.Sum(msg)
+					logrus.Debugf("%9d <-- recv %s\n", len(msg), hex.EncodeToString(rc[:]))
 					err = conn.SendMsg(msg)
 					if err != nil {
 						fmt.Println("send msg failed: ", err)
@@ -70,7 +70,7 @@ func runServer(quit chan struct{}) (net.Addr, error) {
 	return conn.LocalAddr(), nil
 }
 
-func Test_Socket(t *testing.T) {
+func Test_Socket_RecvMsg_SendMsg(t *testing.T) {
 	quit := make(chan struct{})
 	defer close(quit)
 
@@ -85,7 +85,7 @@ func Test_Socket(t *testing.T) {
 		return
 	}
 
-	_, clientConn, err := NewClientSocket(conn, raddr.(*net.UDPAddr))
+	sock, clientConn, err := NewClientSocket(conn, raddr.(*net.UDPAddr))
 	if err != nil {
 		fmt.Printf("create client socket failed: %s", err)
 		return
@@ -128,4 +128,92 @@ func Test_Socket(t *testing.T) {
 	}
 
 	clientConn.Close()
+	sock.Close()
+}
+
+func Test_Socket_WriterReaderCloser(t *testing.T) {
+	quit := make(chan struct{})
+	defer close(quit)
+
+	raddr, err := runServer(quit)
+	if err != nil {
+		t.Errorf("runServer failed: %s", err)
+	}
+
+	maxSize := 1024*1024*128 + 369
+	var start time.Time
+	var td time.Duration
+	var speed float64
+
+	for j := 0; j < 1; j++ {
+		func() {
+			b := make([]byte, maxSize)
+			// stop := make(chan struct{})
+			// go func() {
+			// 	fmt.Print("generate random buffer ")
+			// 	for {
+			// 		select {
+			// 		case <-time.After(1 * time.Second):
+			// 			fmt.Print(".")
+			// 		case <-stop:
+			// 			fmt.Println("")
+			// 			return
+			// 		}
+			// 	}
+			// }()
+			rand.Read(b)
+			// close(stop)
+			sc := md5.Sum(b)
+
+			// open client conn
+			conn, err := net.ListenUDP("udp", nil)
+			if err != nil {
+				fmt.Printf("Some error %v", err)
+				return
+			}
+			defer conn.Close()
+
+			sock, clientConn, err := NewClientSocket(conn, raddr.(*net.UDPAddr))
+			if err != nil {
+				fmt.Printf("create client socket failed: %s", err)
+				return
+			}
+
+			// send
+			go func() {
+				// Send
+				start = time.Now()
+				if _, err := clientConn.Write(b); err != nil {
+					logrus.Errorf("SendMsg failed: %s", err)
+					return
+				}
+				td = time.Since(start)
+				speed = (float64(len(b)) / td.Seconds()) / (1024 * 1024)
+				logrus.Debugf("%9d --> send %s %16s %16f M/s", len(b), hex.EncodeToString(sc[:]), td, speed)
+			}()
+
+			// recv
+			rmsg := make([]byte, len(b))
+			read := 0
+			for read < len(b) {
+				n, err := clientConn.Read(rmsg[read:])
+				if err != nil {
+					t.Errorf("RecvMsg failed: %s", err)
+					break
+				}
+				// Recv
+				rc := md5.Sum(rmsg[read : read+n])
+				logrus.Debugf("Read: <-- recv %s", hex.EncodeToString(rc[:]))
+				read += n
+			}
+
+			if md5.Sum(rmsg) != sc {
+				t.Errorf("%d msg is mismatch", len(b))
+				return
+			}
+
+			clientConn.Close()
+			sock.Close()
+		}()
+	}
 }
