@@ -96,9 +96,6 @@ type Link struct {
 	pingID   uint32
 	pingLock sync.Mutex
 
-	// recvDoneCh is closed when recv() exits
-	recvDoneCh chan struct{}
-
 	// shutdown is used to safely close a link
 	shutdown     bool
 	shutdownErr  error
@@ -134,7 +131,6 @@ func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
 		quit:               make(chan bool, 1),
 
 		pings:      make(map[uint32]chan struct{}),
-		recvDoneCh: make(chan struct{}),
 		shutdownCh: make(chan struct{}),
 	}
 	l.isessionManager = isession.NewManager(config.IsServerSide, l.outbound)
@@ -183,7 +179,6 @@ func (l *Link) Close() error {
 		l.shutdownErr = ErrLinkShutdown
 	}
 	close(l.shutdownCh)
-	<-l.recvDoneCh // FIXME!
 	l.closeOutbound()
 	// TODO: close isessions & tunnles
 	l.tunnelManager.Close()
@@ -321,6 +316,11 @@ func (l *Link) send(conn io.Writer, errCh chan error) {
 	for {
 		select {
 		case m := <-l.outbound:
+			// FIXME!
+			if m == nil {
+				errCh <- errors.New("get nil from l.outbound")
+				return
+			}
 			_, err := io.Copy(conn, m.Reader())
 			if err != nil {
 				logrus.Errorf("link %d: write data to conn failed: %s", l.ID, err)
@@ -336,6 +336,7 @@ func (l *Link) send(conn io.Writer, errCh chan error) {
 }
 
 // Join is bind link with a underlying connection (tcp)
+// TODO: rename & wg.Wait()
 func (l *Link) Join(conn io.ReadWriteCloser) chan error {
 	errCh := make(chan error, 1)
 	go l.recv(conn, errCh)
