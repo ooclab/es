@@ -2,6 +2,7 @@ package udp
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/hex"
 	"math/rand"
 	"testing"
@@ -34,11 +35,13 @@ func Test_msgSending_GetSegmentByOrderID(t *testing.T) {
 		sending := newMsgSending(0, 0, 0, 0, b)
 		sl := map[uint16]string{}
 		for seg := range sending.IterBufferd() {
-			sl[seg.h.OrderID()] = hex.EncodeToString(seg.h.Checksum())
+			ck := md5.Sum(seg.b)
+			sl[seg.h.OrderID()] = hex.EncodeToString(ck[:])
 		}
 		for orderID, origCk := range sl {
 			seg := sending.GetSegmentByOrderID(orderID)
-			newCk := hex.EncodeToString(seg.h.Checksum())
+			ck := md5.Sum(seg.b)
+			newCk := hex.EncodeToString(ck[:])
 			if newCk != origCk {
 				t.Errorf("GetSegmentByOrderID mismatch: orderID = %d, orig ck = %s, new ck = %s", orderID, origCk, newCk)
 			}

@@ -1,17 +1,14 @@
 package udp
 
 import (
-	"bytes"
-	"crypto/md5"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 )
 
 const (
 	// protoVersion is the only version we support
 	protoVersion uint8 = 0
-	headerSize         = 30
+	headerSize         = 14
 
 	segTypeMsgSYN      uint8 = 1
 	segTypeMsgACK      uint8 = 2
@@ -47,7 +44,7 @@ const (
 )
 
 // segment header
-// | Version(1) | Type(1) | Flags(2) | StreamID(4) | TransID(2) | OrderID(2) | Checksum(16) | Length(2) |
+// | Version(1) | Type(1) | Flags(2) | StreamID(4) | TransID(2) | OrderID(2) | Length(2) |
 type header []byte
 
 func (h header) Version() uint8 {
@@ -68,25 +65,21 @@ func (h header) TransID() uint16 {
 func (h header) OrderID() uint16 {
 	return binary.BigEndian.Uint16(h[10:12])
 }
-func (h header) Checksum() []byte {
-	return h[12:28]
-}
 func (h header) Length() uint16 {
-	return binary.BigEndian.Uint16(h[28:30])
+	return binary.BigEndian.Uint16(h[12:14])
 }
 func (h header) String() string {
-	return fmt.Sprintf("Version:%d Type:%d Flags:%d StreamID:%d TransID:%d OrderID:%d Length:%d Checksum:%s",
-		h.Version(), h.Type(), h.Flags(), h.StreamID(), h.TransID(), h.OrderID(), h.Length(), hex.EncodeToString(h.Checksum()))
+	return fmt.Sprintf("Version:%d Type:%d Flags:%d StreamID:%d TransID:%d OrderID:%d Length:%d",
+		h.Version(), h.Type(), h.Flags(), h.StreamID(), h.TransID(), h.OrderID(), h.Length())
 }
-func (h header) encode(segType uint8, flags uint16, streamID uint32, transID uint16, orderID uint16, checksum [md5.Size]byte, length uint16) {
+func (h header) encode(segType uint8, flags uint16, streamID uint32, transID uint16, orderID uint16, length uint16) {
 	h[0] = protoVersion
 	h[1] = segType
 	binary.BigEndian.PutUint16(h[2:4], flags)
 	binary.BigEndian.PutUint32(h[4:8], streamID)
 	binary.BigEndian.PutUint16(h[8:10], transID)
 	binary.BigEndian.PutUint16(h[10:12], orderID)
-	copy(h[12:28], checksum[:])
-	binary.BigEndian.PutUint16(h[28:30], length)
+	binary.BigEndian.PutUint16(h[12:14], length)
 }
 
 type segment struct {
@@ -112,8 +105,7 @@ func newSegment(segType uint8, flags uint16, streamID uint32, transID uint16, or
 	if message == nil {
 		message = []byte{} // FIXME!
 	}
-	checksum := md5.Sum(message)
-	hdr.encode(segType, flags, streamID, transID, orderID, checksum, uint16(length))
+	hdr.encode(segType, flags, streamID, transID, orderID, uint16(length))
 	return &segment{h: hdr, b: message}, nil
 }
 
@@ -151,7 +143,7 @@ func newRepSegment(streamID uint32, b []byte) *segment {
 
 func newSingleSegment(segType uint8, flags uint16, streamID uint32, message []byte) *segment {
 	hdr := header(make([]byte, headerSize))
-	hdr.encode(segType, flags, streamID, 0, 0, md5.Sum(message), uint16(len(message)))
+	hdr.encode(segType, flags, streamID, 0, 0, uint16(len(message)))
 	return &segment{
 		h: hdr,
 		b: message,
@@ -167,11 +159,6 @@ func loadSegment(data []byte) (*segment, error) {
 	seg := &segment{h: hdr, b: b}
 	if hdr.Length() == 0 {
 		return seg, nil // FIXME!
-	}
-	checksum := md5.Sum(seg.b)
-	// FIXME!
-	if !bytes.Equal(seg.h.Checksum(), checksum[:]) {
-		return nil, errSegmentChecksum
 	}
 	return seg, nil
 }
