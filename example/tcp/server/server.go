@@ -35,6 +35,6 @@ func main() {
 
 func handleClient(conn net.Conn) {
 	l := link.NewLink(nil)
-	l.Bind(conn)
-	l.WaitDisconnected()
+	errCh := l.Join(conn)
+	<-errCh
 }

@@ -28,7 +28,7 @@ func main() {
 	}
 
 	l := link.NewLink(nil)
-	l.Bind(conn)
+	errCh := l.Join(conn)
 
 	// localHost := "127.0.0.1"
 	// localPort := 10080
@@ -41,7 +41,7 @@ func main() {
 	}
 	l.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
 
-	l.WaitDisconnected()
+	<-errCh
 }
 
 func parseTunnel(value string) (localHost string, localPort int, remoteHost string, remotePort int, reverse bool, err error) {
