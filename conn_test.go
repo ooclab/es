@@ -13,7 +13,7 @@ import (
 )
 
 func testEcho(conn Conn) error {
-	maxSize := 1024 * 1024 * 16
+	maxSize := 1024 * 64
 	var start time.Time
 	var td time.Duration
 	var speed float64

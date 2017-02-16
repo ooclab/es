@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	maxMessageLength = 1024 * 1024 * 16
+	maxMessageLength = 1024*64 - 1
 )
 
 // common error define
@@ -24,45 +24,33 @@ type Conn interface {
 	Recv() (message []byte, err error)
 	Send(message []byte) error
 	Close() error
-	SetMaxLength(uint32)
 }
 
 // BaseConn is the basic connection type
 type BaseConn struct {
-	conn   io.ReadWriteCloser
-	maxLen uint32 // the max length of payload
+	conn io.ReadWriteCloser
 }
 
 // NewBaseConn create a base Conn object
 func NewBaseConn(conn io.ReadWriteCloser) Conn {
 	return &BaseConn{
-		conn:   conn,
-		maxLen: maxMessageLength, // 16M
+		conn: conn,
 	}
-}
-
-// SetMaxLength set the max length of payload
-func (c *BaseConn) SetMaxLength(maxLen uint32) {
-	c.maxLen = maxLen
 }
 
 // Recv read a message from this Conn
 func (c *BaseConn) Recv() (message []byte, err error) {
-	head, err := c.mustRecv(4)
+	head, err := c.mustRecv(2)
 	if err != nil {
 		return
 	}
-	dlen := binary.BigEndian.Uint32(head)
-	if dlen > c.maxLen {
-		return nil, ErrMaxLengthLimit
-	}
-	return c.mustRecv(dlen)
+	return c.mustRecv(binary.BigEndian.Uint16(head))
 }
 
 // Send send a message to this Conn
 func (c *BaseConn) Send(message []byte) error {
-	dlen := uint32(len(message))
-	if dlen > c.maxLen {
+	dlen := uint16(len(message))
+	if dlen > maxMessageLength {
 		return ErrMaxLengthLimit
 	}
 
@@ -86,7 +74,7 @@ func (c *BaseConn) Close() error {
 	return c.conn.Close()
 }
 
-func (c *BaseConn) mustRecv(dlen uint32) ([]byte, error) {
+func (c *BaseConn) mustRecv(dlen uint16) ([]byte, error) {
 	data := make([]byte, dlen)
 	for i := 0; i < int(dlen); {
 		n, err := c.conn.Read(data[i:])
@@ -110,22 +98,17 @@ func NewSafeConn(conn io.ReadWriteCloser, cipher *ecrypt.Cipher) Conn {
 		cipher: cipher,
 	}
 	c.conn = conn
-	c.maxLen = maxMessageLength
 	return c
 }
 
 // Recv read a message from this Conn
 func (c *SafeConn) Recv() (message []byte, err error) {
-	head, err := c.mustRecv(4)
+	head, err := c.mustRecv(2)
 	if err != nil {
 		return
 	}
-	c.cipher.Decrypt(head[0:4], head[0:4])
-	dlen := binary.BigEndian.Uint32(head)
-	if dlen > c.maxLen {
-		return nil, ErrMaxLengthLimit
-	}
-	message, err = c.mustRecv(dlen)
+	c.cipher.Decrypt(head[0:2], head[0:2])
+	message, err = c.mustRecv(binary.BigEndian.Uint16(head))
 	if err == nil {
 		c.cipher.Decrypt(message, message)
 	}
@@ -134,8 +117,8 @@ func (c *SafeConn) Recv() (message []byte, err error) {
 
 // Send send a message to this Conn
 func (c *SafeConn) Send(message []byte) error {
-	dlen := uint32(len(message))
-	if dlen > c.maxLen {
+	dlen := uint16(len(message))
+	if dlen > maxMessageLength {
 		return ErrMaxLengthLimit
 	}
 
@@ -155,3 +138,5 @@ func (c *SafeConn) Send(message []byte) error {
 	_, err = c.conn.Write(b)
 	return err
 }
+
+// TODO: LargeMessageConn for send large message
