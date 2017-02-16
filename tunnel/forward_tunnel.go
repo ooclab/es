@@ -72,6 +72,7 @@ func (t *ForwardTunnel) closeRemoteChannel(cid uint32) {
 		TunnelID:  t.id,
 		ChannelID: cid,
 	}
+	// FIXME! panic: send on closed channel
 	t.outbound <- &common.LinkOMSG{
 		Type: common.LinkMsgTypeTunnel,
 		Body: m.Bytes(),
