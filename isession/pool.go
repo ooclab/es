@@ -3,8 +3,6 @@ package isession
 import (
 	"errors"
 	"sync"
-
-	"github.com/ooclab/es/common"
 )
 
 type Pool struct {
@@ -50,7 +48,7 @@ func (p *Pool) Exist(id uint32) bool {
 	return exist
 }
 
-func (p *Pool) New(outbound chan *common.LinkOMSG) (*Session, error) {
+func (p *Pool) New(outbound chan []byte) (*Session, error) {
 	id := p.newID()
 
 	p.poolMutex.Lock()

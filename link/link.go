@@ -1,7 +1,6 @@
 package link
 
 import (
-	"bufio"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -10,11 +9,12 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/common"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/isession"
 	"github.com/ooclab/es/tunnel"
 )
 
+// Define error
 var (
 	ErrEventChannelIsFull = errors.New("event channel is full")
 	ErrLinkShutdown       = errors.New("link is shutdown")
@@ -76,7 +76,7 @@ type Link struct {
 
 	// bufRead:    bufio.NewReader(conn)
 	// recvBuf = bytes.NewBuffer(make([]byte, 0, length))
-	outbound         chan *common.LinkOMSG
+	outbound         chan []byte
 	connDisconnected chan bool
 
 	lastRecvTime      time.Time
@@ -123,7 +123,7 @@ func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
 	}
 	l := &Link{
 		config:             config,
-		outbound:           make(chan *common.LinkOMSG, 1),
+		outbound:           make(chan []byte, 1),
 		heartbeatInterval:  15,
 		offlineDetectRelay: 60,
 		lastRecvTimeMutex:  &sync.Mutex{},
@@ -212,10 +212,7 @@ func (l *Link) Ping() (time.Duration, error) {
 	// Send the ping request
 	payload := make([]byte, 4)
 	binary.LittleEndian.PutUint32(payload, id)
-	l.outbound <- &common.LinkOMSG{
-		Type: common.LinkMsgTypePingRequest,
-		Body: payload,
-	}
+	l.outbound <- append([]byte{es.LinkMsgTypePingRequest}, payload...)
 
 	// Wait for a response
 	start := time.Now()
@@ -252,30 +249,11 @@ func (l *Link) keepalive() {
 	}
 }
 
-func (l *Link) recv(conn io.Reader, errCh chan error) {
+func (l *Link) recv(conn es.Conn, errCh chan error) {
 	logrus.Debug("start handler for link message recv")
-	bufRead := bufio.NewReader(conn)
-	hdrBuf := make([]byte, headerSize)
-	var bodyBuf []byte
-	var i uint32
-	var err error
 	for {
-		// read header
-		if _, err = io.ReadFull(bufRead, hdrBuf); err != nil {
-			if err != io.EOF && !strings.Contains(err.Error(), "closed") && !strings.Contains(err.Error(), "reset by peer") {
-				logrus.Errorf("link %d: Failed to read header: %v", l.ID, err)
-			}
-			// TODO: nil
-			errCh <- err
-			return
-		}
-		i = binary.LittleEndian.Uint32(hdrBuf)
-		mType := uint8(i >> 24)
-		mLength := i & 0xffffff
-
-		// read body
-		bodyBuf = make([]byte, mLength)
-		if _, err = io.ReadFull(bufRead, bodyBuf); err != nil {
+		m, err := conn.Recv()
+		if err != nil {
 			if err != io.EOF && !strings.Contains(err.Error(), "closed") && !strings.Contains(err.Error(), "reset by peer") {
 				logrus.Errorf("link %d: Failed to read header: %v", l.ID, err)
 			}
@@ -286,22 +264,23 @@ func (l *Link) recv(conn io.Reader, errCh chan error) {
 
 		l.updateLastRecvTime()
 
+		mType, mData := m[0], m[1:]
+
 		// dispatch
 		switch mType {
-		case common.LinkMsgTypeSession:
-			err = l.isessionManager.HandleIn(bodyBuf)
-		case common.LinkMsgTypeTunnel:
-			err = l.tunnelManager.HandleIn(bodyBuf)
-		case common.LinkMsgTypePingRequest:
-			l.outbound <- &common.LinkOMSG{
-				Type: common.LinkMsgTypePingResponse,
-				Body: bodyBuf,
-			}
-		case common.LinkMsgTypePingResponse:
-			err = l.handlePing(bodyBuf)
+		case es.LinkMsgTypeSession:
+			err = l.isessionManager.HandleIn(mData)
+		case es.LinkMsgTypeTunnel:
+			err = l.tunnelManager.HandleIn(mData)
+		case es.LinkMsgTypePingRequest:
+			l.outbound <- append([]byte{es.LinkMsgTypePingResponse}, mData...)
+		case es.LinkMsgTypePingResponse:
+			err = l.handlePing(mData)
 		default:
 			logrus.Errorf("link %d: unknown message type %d", l.ID, mType)
 			// TODO:
+			errCh <- errors.New("unknown message type")
+			return
 		}
 
 		if err != nil {
@@ -312,7 +291,7 @@ func (l *Link) recv(conn io.Reader, errCh chan error) {
 	}
 }
 
-func (l *Link) send(conn io.Writer, errCh chan error) {
+func (l *Link) send(conn es.Conn, errCh chan error) {
 	for {
 		select {
 		case m := <-l.outbound:
@@ -321,7 +300,7 @@ func (l *Link) send(conn io.Writer, errCh chan error) {
 				errCh <- errors.New("get nil from l.outbound")
 				return
 			}
-			_, err := io.Copy(conn, m.Reader())
+			err := conn.Send(m)
 			if err != nil {
 				logrus.Errorf("link %d: write data to conn failed: %s", l.ID, err)
 				errCh <- err
@@ -335,14 +314,13 @@ func (l *Link) send(conn io.Writer, errCh chan error) {
 	}
 }
 
-// Join is bind link with a underlying connection (tcp)
-// TODO: rename & wg.Wait()
-func (l *Link) Join(conn io.ReadWriteCloser) chan error {
+// Bind bind link with a underlying connection (tcp)
+func (l *Link) Bind(conn es.Conn) error {
 	errCh := make(chan error, 1)
 	go l.recv(conn, errCh)
 	go l.send(conn, errCh)
-	// TODO:
-	return errCh
+	// wait stop
+	return <-errCh
 }
 
 // handlePing is invokde for a LinkMsgTypePing frame
@@ -424,7 +402,7 @@ func (l *Link) OfflineDuration() time.Duration {
 	return time.Since(l.offlineTime)
 }
 
-func (l *Link) syncSend(m *common.LinkOMSG) error {
+func (l *Link) syncSend(m []byte) error {
 	// fmt.Println("syncSend ...", m)
 	select {
 	case l.outbound <- m: // Put m in the channel unless it is full

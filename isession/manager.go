@@ -4,17 +4,17 @@ import (
 	"errors"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/common"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/emsg"
 )
 
 type Manager struct {
 	pool           *Pool
-	outbound       chan *common.LinkOMSG
+	outbound       chan []byte
 	requestHandler RequestHandler
 }
 
-func NewManager(isServerSide bool, outbound chan *common.LinkOMSG) *Manager {
+func NewManager(isServerSide bool, outbound chan []byte) *Manager {
 	m := &Manager{
 		pool:     newPool(isServerSide),
 		outbound: outbound,
@@ -36,10 +36,7 @@ func (manager *Manager) HandleIn(payload []byte) error {
 
 	case MsgTypeRequest:
 		rMsg := manager.requestHandler.Handle(m)
-		manager.outbound <- &common.LinkOMSG{
-			Type: common.LinkMsgTypeSession,
-			Body: rMsg.Bytes(),
-		}
+		manager.outbound <- append([]byte{es.LinkMsgTypeSession}, rMsg.Bytes()...)
 
 	case MsgTypeResponse:
 		s := manager.pool.Get(m.ID)

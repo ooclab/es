@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/common"
 )
 
 type Pool struct {
@@ -74,7 +73,7 @@ func (p *Pool) Delete(t Tunneler) error {
 	return nil
 }
 
-func (p *Pool) New(cfg *TunnelConfig, outbound chan *common.LinkOMSG) (Tunneler, error) {
+func (p *Pool) New(cfg *TunnelConfig, outbound chan []byte) (Tunneler, error) {
 	if cfg.ID == 0 {
 		cfg.ID = p.newID()
 	} else {
@@ -92,7 +91,7 @@ func (p *Pool) New(cfg *TunnelConfig, outbound chan *common.LinkOMSG) (Tunneler,
 	return t, nil
 }
 
-func newTunnel(cfg *TunnelConfig, outbound chan *common.LinkOMSG) Tunneler {
+func newTunnel(cfg *TunnelConfig, outbound chan []byte) Tunneler {
 	if cfg.Reverse {
 		return newReverseTunnel(cfg, outbound)
 	}

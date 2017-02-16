@@ -6,7 +6,7 @@ import (
 	"net"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/common"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/tunnel/channel"
 	tcommon "github.com/ooclab/es/tunnel/common"
 )
@@ -16,10 +16,10 @@ type ForwardTunnel struct {
 	id       uint32
 	config   *TunnelConfig
 	cpool    *channel.Pool
-	outbound chan *common.LinkOMSG
+	outbound chan []byte
 }
 
-func newForwardTunnel(cfg *TunnelConfig, outbound chan *common.LinkOMSG) Tunneler {
+func newForwardTunnel(cfg *TunnelConfig, outbound chan []byte) Tunneler {
 	return &ForwardTunnel{
 		id:       cfg.ID,
 		config:   cfg,
@@ -73,10 +73,7 @@ func (t *ForwardTunnel) closeRemoteChannel(cid uint32) {
 		ChannelID: cid,
 	}
 	// FIXME! panic: send on closed channel
-	t.outbound <- &common.LinkOMSG{
-		Type: common.LinkMsgTypeTunnel,
-		Body: m.Bytes(),
-	}
+	t.outbound <- append([]byte{es.LinkMsgTypeTunnel}, m.Bytes()...)
 	logrus.Debugf("notice remote endpoint to close channel %d done", cid)
 }
 

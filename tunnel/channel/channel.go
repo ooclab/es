@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/common"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/util"
 
 	tcommon "github.com/ooclab/es/tunnel/common"
@@ -23,7 +23,7 @@ type Channel struct {
 
 	TunnelID  uint32
 	ChannelID uint32
-	Outbound  chan *common.LinkOMSG
+	Outbound  chan []byte
 	Conn      net.Conn
 
 	closed bool
@@ -103,10 +103,7 @@ func (c *Channel) Serve() error {
 			Payload:   buf[:reqLen],
 		}
 		// FIXME! panic: send on closed channel
-		c.Outbound <- &common.LinkOMSG{
-			Type: common.LinkMsgTypeTunnel,
-			Body: m.Bytes(),
-		}
+		c.Outbound <- append([]byte{es.LinkMsgTypeTunnel}, m.Bytes()...)
 		atomic.AddUint64(&c.recv, uint64(reqLen))
 	}
 }

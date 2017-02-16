@@ -6,7 +6,7 @@ import (
 	"net"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/common"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/tunnel/channel"
 	tcommon "github.com/ooclab/es/tunnel/common"
 )
@@ -16,10 +16,10 @@ type ReverseTunnel struct {
 	id       uint32
 	config   *TunnelConfig
 	cpool    *channel.Pool
-	outbound chan *common.LinkOMSG
+	outbound chan []byte
 }
 
-func newReverseTunnel(cfg *TunnelConfig, outbound chan *common.LinkOMSG) Tunneler {
+func newReverseTunnel(cfg *TunnelConfig, outbound chan []byte) Tunneler {
 	return &ReverseTunnel{
 		id:       cfg.ID,
 		config:   cfg,
@@ -93,10 +93,7 @@ func (t *ReverseTunnel) closeRemoteChannel(cid uint32) {
 		ChannelID: cid,
 	}
 	logrus.Debugf("Before: notice remote endpoint to close channel %d", cid)
-	t.outbound <- &common.LinkOMSG{
-		Type: common.LinkMsgTypeTunnel,
-		Body: m.Bytes(),
-	}
+	t.outbound <- append([]byte{es.LinkMsgTypeTunnel}, m.Bytes()...)
 	logrus.Debugf("notice remote endpoint to close channel %d", cid)
 }
 

@@ -3,17 +3,17 @@ package isession
 import (
 	"encoding/json"
 
-	"github.com/ooclab/es/common"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/emsg"
 )
 
 type Session struct {
 	ID       uint32
 	inbound  chan []byte
-	outbound chan *common.LinkOMSG
+	outbound chan []byte
 }
 
-func newSession(id uint32, outbound chan *common.LinkOMSG) *Session {
+func newSession(id uint32, outbound chan []byte) *Session {
 	return &Session{
 		ID:       id,
 		inbound:  make(chan []byte, 1),
@@ -39,11 +39,7 @@ func (session *Session) sendAndWait(payload []byte) (respPayload []byte, err err
 		ID:      session.ID,
 		Payload: payload,
 	}
-
-	session.outbound <- &common.LinkOMSG{
-		Type: common.LinkMsgTypeSession,
-		Body: m.Bytes(),
-	}
+	session.outbound <- append([]byte{es.LinkMsgTypeSession}, m.Bytes()...)
 
 	// TODO: timeout
 	respPayload = <-session.inbound

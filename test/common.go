@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/link"
 )
 
@@ -44,8 +45,8 @@ func getServerAndClient() (serverLink *link.Link, clientLink *link.Link, err err
 			go func() {
 				l := link.NewLink(nil)
 				serverLinkCh <- l
-				errCh := l.Join(conn)
-				err := <-errCh
+				ec := es.NewBaseConn(conn)
+				l.Bind(ec)
 				l.Close()
 				fmt.Println("link quit: ", err)
 			}()
@@ -82,10 +83,10 @@ func connectServer(addr string) *link.Link {
 		panic(err)
 	}
 	l := link.NewLink(nil)
-	errCh := l.Join(conn)
+	ec := es.NewBaseConn(conn)
 	// FIXME: quit it not a good choice for testcase!
 	go func() {
-		err := <-errCh
+		l.Bind(ec)
 		fmt.Println("link quit: ", err)
 		l.Close()
 	}()
