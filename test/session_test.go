@@ -6,7 +6,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 
-	"github.com/ooclab/es/isession"
+	"github.com/ooclab/es/session"
 )
 
 func testEq(a, b []byte) bool {
@@ -39,7 +39,7 @@ func Benchmark_LinkInnerSessionSingle(b *testing.B) {
 
 	s, _ := clientLink.OpenInnerSession()
 	for i := 0; i < b.N; i++ { //use b.N for looping
-		s.SendAndWait(&isession.Request{Action: "/echo", Body: []byte("Ping")})
+		s.SendAndWait(&session.Request{Action: "/echo", Body: []byte("Ping")})
 	}
 }
 
@@ -48,7 +48,7 @@ func Benchmark_LinkInnerSessionMulti(b *testing.B) {
 
 	for i := 0; i < b.N; i++ { //use b.N for looping
 		s, _ := clientLink.OpenInnerSession()
-		s.SendAndWait(&isession.Request{Action: "/echo", Body: []byte("Ping")})
+		s.SendAndWait(&session.Request{Action: "/echo", Body: []byte("Ping")})
 	}
 }
 
@@ -64,23 +64,7 @@ func Test_LinkInnerSessionMinimalFrame(t *testing.T) {
 	}
 }
 
-// FIXME! remote endpoint would close connection when send large message, test it someday!
-// func Test_LinkInnerSessionLargeFrame(t *testing.T) {
-// 	port, _ := startServer()
-// 	l := connectServer(fmt.Sprintf("127.0.0.1:%d", port))
-// 	defer l.Close()
-//
-// 	s, _ := l.OpenInnerSession()
-// 	// FIXME: session request package is large than raw payload
-// 	for _, i := range []int{4194303, 4194304, 4194305} {
-// 		if !testLinkInnerSession(s, i) {
-// 			t.Error("response and request mismatch!")
-// 			return
-// 		}
-// 	}
-// }
-
-func testLinkInnerSession(s *isession.Session, length int) bool {
+func testLinkInnerSession(s *session.Session, length int) bool {
 	b := make([]byte, length)
 	_, err := rand.Read(b)
 	if err != nil {
@@ -88,7 +72,7 @@ func testLinkInnerSession(s *isession.Session, length int) bool {
 		return false
 	}
 
-	resp, err := s.SendAndWait(&isession.Request{Action: "/echo", Body: b})
+	resp, err := s.SendAndWait(&session.Request{Action: "/echo", Body: b})
 	if err != nil {
 		logrus.Error("request failed:", resp, err, length)
 		return false

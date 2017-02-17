@@ -1,4 +1,4 @@
-package isession
+package session
 
 import (
 	"errors"
@@ -40,14 +40,14 @@ func (manager *Manager) HandleIn(payload []byte) error {
 	case MsgTypeResponse:
 		s := manager.pool.Get(m.ID)
 		if s == nil {
-			logrus.Errorf("can not find isession with ID %d", m.ID)
-			return errors.New("no such isession")
+			logrus.Errorf("can not find session with ID %d", m.ID)
+			return errors.New("no such session")
 		}
 		s.HandleResponse(m.Payload)
 
 	default:
-		logrus.Errorf("unknown isession msg type: %d", m.Type)
-		return errors.New("unknown isession msg type")
+		logrus.Errorf("unknown session msg type: %d", m.Type)
+		return errors.New("unknown session msg type")
 
 	}
 

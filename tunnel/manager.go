@@ -7,24 +7,24 @@ import (
 
 	"github.com/Sirupsen/logrus"
 
-	"github.com/ooclab/es/isession"
+	"github.com/ooclab/es/session"
 	tcommon "github.com/ooclab/es/tunnel/common"
 	"github.com/ooclab/es/util"
 )
 
 type Manager struct {
-	pool            *Pool
-	lpool           *listenPool
-	outbound        chan []byte
-	isessionManager *isession.Manager
+	pool           *Pool
+	lpool          *listenPool
+	outbound       chan []byte
+	sessionManager *session.Manager
 }
 
-func NewManager(isServerSide bool, outbound chan []byte, ism *isession.Manager) *Manager {
+func NewManager(isServerSide bool, outbound chan []byte, sm *session.Manager) *Manager {
 	return &Manager{
-		pool:            NewPool(isServerSide),
-		lpool:           newListenPool(),
-		outbound:        outbound,
-		isessionManager: ism,
+		pool:           NewPool(isServerSide),
+		lpool:          newListenPool(),
+		outbound:       outbound,
+		sessionManager: sm,
 	}
 }
 

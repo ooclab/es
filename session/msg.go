@@ -1,4 +1,4 @@
-package isession
+package session
 
 import (
 	"bytes"

@@ -5,11 +5,11 @@ import (
 	"errors"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/isession"
+	"github.com/ooclab/es/session"
 	"github.com/ooclab/es/tunnel"
 )
 
-func defaultOpenTunnel(isessionManager *isession.Manager, tunnelManager *tunnel.Manager) OpenTunnelFunc {
+func defaultOpenTunnel(sessionManager *session.Manager, tunnelManager *tunnel.Manager) OpenTunnelFunc {
 	return func(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
 		// send open tunnel message to remote endpoint
 		cfg := &tunnel.TunnelConfig{
@@ -21,13 +21,13 @@ func defaultOpenTunnel(isessionManager *isession.Manager, tunnelManager *tunnel.
 		}
 
 		body, _ := json.Marshal(cfg.RemoteConfig())
-		session, err := isessionManager.New()
+		s, err := sessionManager.New()
 		if err != nil {
-			logrus.Errorf("open isession failed: %s", err)
+			logrus.Errorf("open session failed: %s", err)
 			return err
 		}
 
-		resp, err := session.SendAndWait(&isession.Request{
+		resp, err := s.SendAndWait(&session.Request{
 			Action: "/tunnel",
 			Body:   body,
 		})

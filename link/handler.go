@@ -4,60 +4,60 @@ import (
 	"encoding/json"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/isession"
+	"github.com/ooclab/es/session"
 	"github.com/ooclab/es/tunnel"
 )
 
 type requestHandler struct {
-	router *isession.Router
+	router *session.Router
 }
 
-func newRequestHandler(routes []isession.Route) *requestHandler {
+func newRequestHandler(routes []session.Route) *requestHandler {
 	h := &requestHandler{
-		router: isession.NewRouter(),
+		router: session.NewRouter(),
 	}
-	h.router.AddRoutes([]isession.Route{
+	h.router.AddRoutes([]session.Route{
 		{"/echo", h.echo},
 	})
 	h.router.AddRoutes(routes)
 	return h
 }
 
-func (h *requestHandler) Handle(m *isession.EMSG) *isession.EMSG {
-	var resp *isession.Response
+func (h *requestHandler) Handle(m *session.EMSG) *session.EMSG {
+	var resp *session.Response
 	var err error
 
-	req := &isession.Request{}
+	req := &session.Request{}
 	if err = json.Unmarshal(m.Payload, &req); err != nil {
-		logrus.Errorf("json unmarshal isession request failed: %s", err)
-		resp = &isession.Response{Status: "json-unmarshal-request-error"}
+		logrus.Errorf("json unmarshal session request failed: %s", err)
+		resp = &session.Response{Status: "json-unmarshal-request-error"}
 	} else {
 		resp, err = h.router.Dispatch(req)
 		if err != nil {
 			logrus.Errorf("dispatch request failed: %s", err)
-			resp = &isession.Response{Status: "dispatch-request-error"}
+			resp = &session.Response{Status: "dispatch-request-error"}
 		}
 	}
 
 	payload, err := json.Marshal(resp)
 	if err != nil {
 		logrus.Errorf("json marshal response failed: %s", err)
-		resp = &isession.Response{Status: "json-marshal-response-error"}
+		resp = &session.Response{Status: "json-marshal-response-error"}
 	}
 
-	return &isession.EMSG{
-		Type:    isession.MsgTypeResponse,
+	return &session.EMSG{
+		Type:    session.MsgTypeResponse,
 		ID:      m.ID,
 		Payload: payload,
 	}
 }
 
-func (h *requestHandler) echo(req *isession.Request) (*isession.Response, error) {
-	return &isession.Response{Status: "success", Body: req.Body}, nil
+func (h *requestHandler) echo(req *session.Request) (*session.Response, error) {
+	return &session.Response{Status: "success", Body: req.Body}, nil
 }
 
-func defaultTunnelCreateHandler(manager *tunnel.Manager) isession.RequestHandlerFunc {
-	return func(r *isession.Request) (resp *isession.Response, err error) {
+func defaultTunnelCreateHandler(manager *tunnel.Manager) session.RequestHandlerFunc {
+	return func(r *session.Request) (resp *session.Response, err error) {
 		cfg := &tunnel.TunnelConfig{}
 		if err = json.Unmarshal(r.Body, &cfg); err != nil {
 			logrus.Errorf("tunnel create: unmarshal tunnel config failed: %s", err)
@@ -75,7 +75,7 @@ func defaultTunnelCreateHandler(manager *tunnel.Manager) isession.RequestHandler
 		}
 
 		body, _ := json.Marshal(tunnelCreateBody{ID: t.ID})
-		resp = &isession.Response{
+		resp = &session.Response{
 			Status: "success",
 			Body:   body,
 		}

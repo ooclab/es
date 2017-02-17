@@ -1,4 +1,4 @@
-package isession
+package session
 
 const (
 	MsgTypeRequest  uint8 = 1

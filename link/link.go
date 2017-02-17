@@ -10,7 +10,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es"
-	"github.com/ooclab/es/isession"
+	"github.com/ooclab/es/session"
 	"github.com/ooclab/es/tunnel"
 )
 
@@ -71,8 +71,8 @@ type Link struct {
 	ID     uint32
 	config *LinkConfig
 
-	isessionManager *isession.Manager
-	tunnelManager   *tunnel.Manager
+	sessionManager *session.Manager
+	tunnelManager  *tunnel.Manager
 
 	// bufRead:    bufio.NewReader(conn)
 	// recvBuf = bytes.NewBuffer(make([]byte, 0, length))
@@ -110,12 +110,12 @@ func NewLink(config *LinkConfig) *Link {
 	return newLink(config, nil)
 }
 
-// NewLinkCustom create a new link by custom isession.RequestHandler
-func NewLinkCustom(config *LinkConfig, hdr isession.RequestHandler) *Link {
+// NewLinkCustom create a new link by custom session.RequestHandler
+func NewLinkCustom(config *LinkConfig, hdr session.RequestHandler) *Link {
 	return newLink(config, hdr)
 }
 
-func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
+func newLink(config *LinkConfig, hdr session.RequestHandler) *Link {
 	if config == nil {
 		config = &LinkConfig{
 			EnableKeepAlive:        true,
@@ -135,16 +135,16 @@ func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
 		pings:      make(map[uint32]chan struct{}),
 		shutdownCh: make(chan struct{}),
 	}
-	l.isessionManager = isession.NewManager(config.IsServerSide, l.outbound)
-	l.tunnelManager = tunnel.NewManager(config.IsServerSide, l.outbound, l.isessionManager)
+	l.sessionManager = session.NewManager(config.IsServerSide, l.outbound)
+	l.tunnelManager = tunnel.NewManager(config.IsServerSide, l.outbound, l.sessionManager)
 	if hdr == nil {
-		hdr = newRequestHandler([]isession.Route{
+		hdr = newRequestHandler([]session.Route{
 			{"/tunnel", defaultTunnelCreateHandler(l.tunnelManager)},
 		})
 	}
-	l.isessionManager.SetRequestHandler(hdr)
+	l.sessionManager.SetRequestHandler(hdr)
 	// TODO: custom defaultOpenTunnel func
-	l.defaultOpenTunnel = defaultOpenTunnel(l.isessionManager, l.tunnelManager)
+	l.defaultOpenTunnel = defaultOpenTunnel(l.sessionManager, l.tunnelManager)
 	if config.EnableKeepAlive {
 		go l.keepalive()
 	}
@@ -184,9 +184,9 @@ func (l *Link) Close() error {
 	}
 	close(l.shutdownCh)
 	l.closeOutbound()
-	// TODO: close isessions & tunnles
+	// TODO: close sessions & tunnles
 	l.tunnelManager.Close()
-	l.isessionManager.Close()
+	l.sessionManager.Close()
 	return nil
 }
 
@@ -273,7 +273,7 @@ func (l *Link) recv(conn es.Conn, errCh chan error) {
 		// dispatch
 		switch mType {
 		case es.LinkMsgTypeSession:
-			err = l.isessionManager.HandleIn(mData)
+			err = l.sessionManager.HandleIn(mData)
 		case es.LinkMsgTypeTunnel:
 			err = l.tunnelManager.HandleIn(mData)
 		case es.LinkMsgTypePingRequest:
@@ -343,8 +343,8 @@ func (l *Link) handlePing(payload []byte) error {
 	return nil
 }
 
-func (l *Link) OpenInnerSession() (*isession.Session, error) {
-	return l.isessionManager.New()
+func (l *Link) OpenInnerSession() (*session.Session, error) {
+	return l.sessionManager.New()
 }
 
 func (l *Link) updateLastRecvTime() {
