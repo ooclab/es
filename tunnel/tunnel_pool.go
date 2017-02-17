@@ -10,14 +10,14 @@ import (
 type Pool struct {
 	curID     uint32
 	idMutex   *sync.Mutex
-	pool      map[uint32]Tunneler
+	pool      map[uint32]*Tunnel
 	poolMutex *sync.Mutex
 }
 
 func NewPool(isServerSide bool) *Pool {
 	p := &Pool{
 		idMutex:   &sync.Mutex{},
-		pool:      map[uint32]Tunneler{},
+		pool:      map[uint32]*Tunnel{},
 		poolMutex: &sync.Mutex{},
 	}
 	if isServerSide {
@@ -50,7 +50,7 @@ func (p *Pool) Exist(id uint32) bool {
 	return exist
 }
 
-func (p *Pool) Get(id uint32) Tunneler {
+func (p *Pool) Get(id uint32) *Tunnel {
 	p.poolMutex.Lock()
 	v, exist := p.pool[id]
 	p.poolMutex.Unlock()
@@ -61,10 +61,10 @@ func (p *Pool) Get(id uint32) Tunneler {
 	}
 }
 
-func (p *Pool) Delete(t Tunneler) error {
+func (p *Pool) Delete(t *Tunnel) error {
 	p.poolMutex.Lock()
 	defer p.poolMutex.Unlock()
-	id := t.ID()
+	id := t.ID
 	_, exist := p.pool[id]
 	if !exist {
 		return errors.New("delete failed: tunnel not exist")
@@ -73,7 +73,7 @@ func (p *Pool) Delete(t Tunneler) error {
 	return nil
 }
 
-func (p *Pool) New(cfg *TunnelConfig, outbound chan []byte) (Tunneler, error) {
+func (p *Pool) New(cfg *TunnelConfig, outbound chan []byte) (*Tunnel, error) {
 	if cfg.ID == 0 {
 		cfg.ID = p.newID()
 	} else {
@@ -89,12 +89,4 @@ func (p *Pool) New(cfg *TunnelConfig, outbound chan []byte) (Tunneler, error) {
 	p.poolMutex.Unlock()
 
 	return t, nil
-}
-
-func newTunnel(cfg *TunnelConfig, outbound chan []byte) Tunneler {
-	if cfg.Reverse {
-		return newReverseTunnel(cfg, outbound)
-	}
-
-	return newForwardTunnel(cfg, outbound)
 }

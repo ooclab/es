@@ -25,7 +25,7 @@ func (manager *Manager) HandleTunnelCreate(r *isession.Request) (resp *isession.
 		return
 	}
 
-	body, _ := json.Marshal(tunnelCreateBody{ID: t.ID()})
+	body, _ := json.Marshal(tunnelCreateBody{ID: t.ID})
 	resp = &isession.Response{
 		Status: "success",
 		Body:   body,

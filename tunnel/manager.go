@@ -63,39 +63,22 @@ func (manager *Manager) HandleIn(payload []byte) error {
 	return nil
 }
 
-func (manager *Manager) tunnelCreate(cfg *TunnelConfig) (Tunneler, error) {
-	if cfg.Reverse {
-		return manager.createReverseTunnel(cfg)
-	}
-
-	return manager.createForwardTunnel(cfg)
-}
-
-func (manager *Manager) createReverseTunnel(cfg *TunnelConfig) (Tunneler, error) {
-	logrus.Debugf("prepare to create a reverse tunnel with config %+v", cfg)
+func (manager *Manager) tunnelCreate(cfg *TunnelConfig) (*Tunnel, error) {
+	logrus.Debugf("prepare to create a tunnel with config %+v", cfg)
 	t, err := manager.pool.New(cfg, manager.outbound)
 	if err != nil {
 		logrus.Errorf("create new tunnel failed: %s", err)
 		return nil, err
 	}
 
-	logrus.Debugf("create reverse tunnel: %+v", t)
-	return t, nil
-}
-
-func (manager *Manager) createForwardTunnel(cfg *TunnelConfig) (Tunneler, error) {
-	logrus.Debugf("prepare to create a forward tunnel with config %+v", cfg)
-	t, err := manager.pool.New(cfg, manager.outbound)
-	if err != nil {
-		logrus.Errorf("create new tunnel failed: %s", err)
-		return nil, err
+	if !cfg.Reverse {
+		if err := manager.runListenTunnel(t); err != nil {
+			logrus.Errorf("run forward tunnel failed!")
+			manager.pool.Delete(t)
+			return nil, err
+		}
 	}
 
-	if err := manager.runListenTunnel(t); err != nil {
-		logrus.Errorf("run forward tunnel failed!")
-		manager.pool.Delete(t)
-		return nil, err
-	}
 	logrus.Debugf("create forward tunnel: %+v", t)
 	return t, nil
 }
@@ -182,8 +165,8 @@ func (manager *Manager) listenTCP(host string, port int) (net.Listener, error) {
 }
 
 // runListenTunnel the tunnel in listen side
-func (manager *Manager) runListenTunnel(t Tunneler) error {
-	cfg := t.Config()
+func (manager *Manager) runListenTunnel(t *Tunnel) error {
+	cfg := t.Config
 	if cfg.Reverse {
 		return errors.New("not forward tunnel")
 	}
