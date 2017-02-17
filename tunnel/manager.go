@@ -1,7 +1,6 @@
 package tunnel
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -63,7 +62,7 @@ func (manager *Manager) HandleIn(payload []byte) error {
 	return nil
 }
 
-func (manager *Manager) tunnelCreate(cfg *TunnelConfig) (*Tunnel, error) {
+func (manager *Manager) TunnelCreate(cfg *TunnelConfig) (*Tunnel, error) {
 	logrus.Debugf("prepare to create a tunnel with config %+v", cfg)
 	t, err := manager.pool.New(cfg, manager.outbound)
 	if err != nil {
@@ -81,61 +80,6 @@ func (manager *Manager) tunnelCreate(cfg *TunnelConfig) (*Tunnel, error) {
 
 	logrus.Debugf("create forward tunnel: %+v", t)
 	return t, nil
-}
-
-// OpenTunnel open a tunnel
-func (manager *Manager) OpenTunnel(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
-	// send open tunnel message to remote endpoint
-	cfg := &TunnelConfig{
-		LocalHost:  localHost,
-		LocalPort:  localPort,
-		RemoteHost: remoteHost,
-		RemotePort: remotePort,
-		Reverse:    reverse,
-	}
-
-	body, _ := json.Marshal(cfg.RemoteConfig())
-	session, err := manager.isessionManager.New()
-	if err != nil {
-		logrus.Errorf("open isession failed: %s", err)
-		return err
-	}
-
-	resp, err := session.SendAndWait(&isession.Request{
-		Action: "/tunnel",
-		Body:   body,
-	})
-	if err != nil {
-		logrus.Errorf("send request to remote endpoint failed: %s", err)
-		return err
-	}
-
-	// fmt.Println("resp: ", resp)
-	if resp.Status != "success" {
-		logrus.Errorf("open tunnel in the remote endpoint failed: %+v", resp)
-		return errors.New("open tunnel in the remote endpoint failed")
-	}
-
-	tcBody := tunnelCreateBody{}
-	if err = json.Unmarshal(resp.Body, &tcBody); err != nil {
-		logrus.Errorf("json unmarshal body failed: %s", err)
-		return errors.New("json unmarshal body error")
-	}
-
-	// success: open tunnel at local endpoint
-	logrus.Debug("open tunnel in the remote endpoint success")
-
-	cfg.ID = tcBody.ID
-	t, err := manager.tunnelCreate(cfg)
-	if err != nil {
-		logrus.Errorf("open tunnel in the local side failed: %s", err)
-		// TODO: close the tunnel in remote endpoint
-		return errors.New("open tunnel in the local side failed")
-	}
-
-	logrus.Debugf("open tunnel %s in the local side success", t)
-
-	return nil
 }
 
 func (manager *Manager) listenTCP(host string, port int) (net.Listener, error) {

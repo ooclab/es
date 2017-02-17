@@ -66,26 +66,3 @@ func (manager *Manager) Close() {
 		manager.pool.Delete(item.Val)
 	}
 }
-
-// func (l *Link) openInnerSession() (*InnerSession, error) {
-// 	return l.innerSessionPool.New(l)
-// }
-//
-// func (l *Link) handleInnerSessionRequest(frame *linkFrame) error {
-// 	payload := l.requestHandler.Handle(frame.Payload)
-// 	return l.writeFrame(LINK_FRAME_TYPE_INNERSESSION_REP, frame.ID, payload)
-// }
-//
-// func (l *Link) handleInnerSessionResponse(frame *linkFrame) error {
-// 	session := l.innerSessionPool.Get(frame.ID)
-// 	if session == nil {
-// 		return errors.New("no such inner session")
-// 	}
-//
-// 	return session.HandleResponse(frame.Payload)
-// }
-//
-// func (l *Link) sessionStream(frame *linkFrame) error {
-// 	logrus.Infof("got session message: %s", frame)
-// 	return nil
-// }

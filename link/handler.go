@@ -6,6 +6,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es/emsg"
 	"github.com/ooclab/es/isession"
+	"github.com/ooclab/es/tunnel"
 )
 
 type requestHandler struct {
@@ -54,4 +55,31 @@ func (h *requestHandler) Handle(m *emsg.EMSG) *emsg.EMSG {
 
 func (h *requestHandler) echo(req *isession.Request) (*isession.Response, error) {
 	return &isession.Response{Status: "success", Body: req.Body}, nil
+}
+
+func defaultTunnelCreateHandler(manager *tunnel.Manager) isession.RequestHandlerFunc {
+	return func(r *isession.Request) (resp *isession.Response, err error) {
+		cfg := &tunnel.TunnelConfig{}
+		if err = json.Unmarshal(r.Body, &cfg); err != nil {
+			logrus.Errorf("tunnel create: unmarshal tunnel config failed: %s", err)
+			resp.Status = "load-tunnel-map-error"
+			return
+		}
+
+		logrus.Debug("handle got: ", cfg)
+
+		t, err := manager.TunnelCreate(cfg)
+		if err != nil {
+			logrus.Errorf("create tunnel failed: %s", err)
+			resp.Status = "create-tunnel-failed"
+			return
+		}
+
+		body, _ := json.Marshal(tunnelCreateBody{ID: t.ID})
+		resp = &isession.Response{
+			Status: "success",
+			Body:   body,
+		}
+		return
+	}
 }

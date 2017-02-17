@@ -101,6 +101,8 @@ type Link struct {
 	shutdownErr  error
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
+
+	defaultOpenTunnel OpenTunnelFunc
 }
 
 // NewLink create a new link
@@ -137,10 +139,12 @@ func newLink(config *LinkConfig, hdr isession.RequestHandler) *Link {
 	l.tunnelManager = tunnel.NewManager(config.IsServerSide, l.outbound, l.isessionManager)
 	if hdr == nil {
 		hdr = newRequestHandler([]isession.Route{
-			{"/tunnel", l.tunnelManager.HandleTunnelCreate},
+			{"/tunnel", defaultTunnelCreateHandler(l.tunnelManager)},
 		})
 	}
 	l.isessionManager.SetRequestHandler(hdr)
+	// TODO: custom defaultOpenTunnel func
+	l.defaultOpenTunnel = defaultOpenTunnel(l.isessionManager, l.tunnelManager)
 	if config.EnableKeepAlive {
 		go l.keepalive()
 	}
@@ -343,10 +347,6 @@ func (l *Link) OpenInnerSession() (*isession.Session, error) {
 	return l.isessionManager.New()
 }
 
-func (l *Link) OpenTunnel(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
-	return l.tunnelManager.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
-}
-
 func (l *Link) updateLastRecvTime() {
 	l.lastRecvTimeMutex.Lock()
 	defer l.lastRecvTimeMutex.Unlock()
@@ -425,4 +425,9 @@ func (l *Link) syncSendEvent(event *LinkEvent) error {
 		logrus.Debug("l.Event Channel full. Discarding value")
 		return ErrEventChannelIsFull
 	}
+}
+
+// OpenTunnel open a tunnel
+func (l *Link) OpenTunnel(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
+	return l.defaultOpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
 }
