@@ -7,9 +7,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/link"
 )
 
@@ -28,20 +30,23 @@ func main() {
 	}
 
 	l := link.NewLink(nil)
-	errCh := l.Join(conn)
+	go func() {
+		time.Sleep(1 * time.Second) // FIXME!
+		// localHost := "127.0.0.1"
+		// localPort := 10080
+		// remoteHost := "127.0.0.1"
+		// remotePort := 3000
+		// reverse := false
+		localHost, localPort, remoteHost, remotePort, reverse, err := parseTunnel(os.Args[2])
+		if err != nil {
+			panic(err)
+		}
+		l.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
+	}()
 
-	// localHost := "127.0.0.1"
-	// localPort := 10080
-	// remoteHost := "127.0.0.1"
-	// remotePort := 3000
-	// reverse := false
-	localHost, localPort, remoteHost, remotePort, reverse, err := parseTunnel(os.Args[2])
-	if err != nil {
-		panic(err)
-	}
-	l.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
-
-	<-errCh
+	ec := es.NewBaseConn(conn)
+	l.Bind(ec)
+	l.Close()
 }
 
 func parseTunnel(value string) (localHost string, localPort int, remoteHost string, remotePort int, reverse bool, err error) {

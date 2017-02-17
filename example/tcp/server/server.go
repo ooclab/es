@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/ooclab/es"
 	"github.com/ooclab/es/link"
 )
 
@@ -33,8 +34,9 @@ func main() {
 	}
 }
 
-func handleClient(conn net.Conn) {
+func handleClient(_conn net.Conn) {
 	l := link.NewLink(nil)
-	errCh := l.Join(conn)
-	<-errCh
+	conn := es.NewBaseConn(_conn)
+	l.Bind(conn)
+	l.Close()
 }
