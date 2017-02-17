@@ -4,8 +4,6 @@ import (
 	"errors"
 	"regexp"
 	"strings"
-
-	"github.com/ooclab/es/emsg"
 )
 
 var (
@@ -14,7 +12,7 @@ var (
 
 // RequestHandler define request-response handler func
 type RequestHandler interface {
-	Handle(*emsg.EMSG) *emsg.EMSG
+	Handle(*EMSG) *EMSG
 }
 
 type RequestHandlerFunc func(*Request) (*Response, error)

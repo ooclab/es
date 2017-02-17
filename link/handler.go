@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/ooclab/es/emsg"
 	"github.com/ooclab/es/isession"
 	"github.com/ooclab/es/tunnel"
 )
@@ -24,7 +23,7 @@ func newRequestHandler(routes []isession.Route) *requestHandler {
 	return h
 }
 
-func (h *requestHandler) Handle(m *emsg.EMSG) *emsg.EMSG {
+func (h *requestHandler) Handle(m *isession.EMSG) *isession.EMSG {
 	var resp *isession.Response
 	var err error
 
@@ -46,7 +45,7 @@ func (h *requestHandler) Handle(m *emsg.EMSG) *emsg.EMSG {
 		resp = &isession.Response{Status: "json-marshal-response-error"}
 	}
 
-	return &emsg.EMSG{
+	return &isession.EMSG{
 		Type:    isession.MsgTypeResponse,
 		ID:      m.ID,
 		Payload: payload,

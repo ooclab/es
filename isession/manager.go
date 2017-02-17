@@ -5,7 +5,6 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es"
-	"github.com/ooclab/es/emsg"
 )
 
 type Manager struct {
@@ -27,7 +26,7 @@ func (manager *Manager) SetRequestHandler(hdr RequestHandler) {
 }
 
 func (manager *Manager) HandleIn(payload []byte) error {
-	m, err := emsg.LoadEMSG(payload)
+	m, err := LoadEMSG(payload)
 	if err != nil {
 		return err
 	}

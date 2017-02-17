@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	"github.com/ooclab/es"
-	"github.com/ooclab/es/emsg"
 )
 
 type Session struct {
@@ -34,7 +33,7 @@ func (session *Session) HandleResponse(payload []byte) error {
 func (session *Session) sendAndWait(payload []byte) (respPayload []byte, err error) {
 	// TODO:
 
-	m := &emsg.EMSG{
+	m := &EMSG{
 		Type:    MsgTypeRequest,
 		ID:      session.ID,
 		Payload: payload,
