@@ -37,7 +37,7 @@ func testEq(a, b []byte) bool {
 func Benchmark_LinkInnerSessionSingle(b *testing.B) {
 	_, clientLink, _ := getServerAndClient()
 
-	s, _ := clientLink.OpenInnerSession()
+	s, _ := clientLink.NewSession()
 	for i := 0; i < b.N; i++ { //use b.N for looping
 		s.SendAndWait(&session.Request{Action: "/echo", Body: []byte("Ping")})
 	}
@@ -47,7 +47,7 @@ func Benchmark_LinkInnerSessionMulti(b *testing.B) {
 	_, clientLink, _ := getServerAndClient()
 
 	for i := 0; i < b.N; i++ { //use b.N for looping
-		s, _ := clientLink.OpenInnerSession()
+		s, _ := clientLink.NewSession()
 		s.SendAndWait(&session.Request{Action: "/echo", Body: []byte("Ping")})
 	}
 }
@@ -55,7 +55,7 @@ func Benchmark_LinkInnerSessionMulti(b *testing.B) {
 func Test_LinkInnerSessionMinimalFrame(t *testing.T) {
 	_, clientLink, _ := getServerAndClient()
 
-	s, _ := clientLink.OpenInnerSession()
+	s, _ := clientLink.NewSession()
 	for i := 0; i < 1025; i++ {
 		if !testLinkInnerSession(s, i) {
 			t.Error("response and request mismatch!")

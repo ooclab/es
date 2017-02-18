@@ -343,7 +343,7 @@ func (l *Link) handlePing(payload []byte) error {
 	return nil
 }
 
-func (l *Link) OpenInnerSession() (*session.Session, error) {
+func (l *Link) NewSession() (*session.Session, error) {
 	return l.sessionManager.New()
 }
 
