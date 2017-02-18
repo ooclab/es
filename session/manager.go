@@ -61,7 +61,7 @@ func (manager *Manager) New() (*Session, error) {
 func (manager *Manager) Close() {
 	for item := range manager.pool.IterBuffered() {
 		item.Val.Close()
-		logrus.Debugf("close session %s", item.Key)
+		logrus.Debugf("close session %d", item.Key)
 		manager.pool.Delete(item.Val)
 	}
 }

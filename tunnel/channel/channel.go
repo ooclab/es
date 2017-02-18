@@ -49,6 +49,10 @@ func (c *Channel) Close() {
 	logrus.Debugf("CLOSE channel %s: recv = %d, send = %d", c, atomic.LoadUint64(&c.recv), atomic.LoadUint64(&c.send))
 }
 
+func (c *Channel) IsClosed() bool {
+	return c.closed
+}
+
 func (c *Channel) HandleIn(m *tcommon.TMSG) error {
 	// TODO: 1. use write cached !
 	// TODO: 2. use goroutine & channel to handle inbound message ?

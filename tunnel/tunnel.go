@@ -102,7 +102,9 @@ func (t *Tunnel) NewChannelByConn(conn net.Conn) *channel.Channel {
 
 func (t *Tunnel) ServeChannel(c *channel.Channel) {
 	if err := c.Serve(); err != nil {
-		t.closeRemoteChannel(c.ChannelID)
+		if !c.IsClosed() {
+			t.closeRemoteChannel(c.ChannelID)
+		}
 	}
 	if t.cpool.Exist(c.ChannelID) {
 		t.cpool.Delete(c)
