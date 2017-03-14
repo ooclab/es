@@ -9,39 +9,74 @@ import (
 	"github.com/Sirupsen/logrus"
 )
 
+type listenTarget struct {
+	proto string
+	addr  string
+	t     interface{}
+}
+
+func newTCPListenTarget(host string, port int, l net.Listener) *listenTarget {
+	return &listenTarget{
+		proto: "tcp",
+		addr:  fmt.Sprintf("%s:%d", host, port),
+		t:     l,
+	}
+}
+
+func newUDPListenTarget(host string, port int, conn *net.UDPConn) *listenTarget {
+	return &listenTarget{
+		proto: "udp",
+		addr:  fmt.Sprintf("%s:%d", host, port),
+		t:     conn,
+	}
+}
+
+func (l *listenTarget) Close() error {
+	switch l.proto {
+	case "tcp":
+		logrus.Debugf("closing tcp listen: %s", l.addr)
+		return l.t.(net.Listener).Close()
+	case "udp":
+		logrus.Debugf("closing udp listen: %s", l.addr)
+		return l.t.(*net.UDPConn).Close()
+	}
+	return nil // FIXME!
+}
+
 type listenPool struct {
-	pool      map[string]net.Listener
+	pool      map[string]*listenTarget
 	poolMutex *sync.Mutex
 }
 
 func newListenPool() *listenPool {
 	return &listenPool{
-		pool:      map[string]net.Listener{},
+		pool:      map[string]*listenTarget{},
 		poolMutex: &sync.Mutex{},
 	}
 }
 
-func (p *listenPool) getKey(host string, port int) string {
-	return fmt.Sprintf("%s:%d", host, port)
+func (p *listenPool) TCPKey(host string, port int) string {
+	return fmt.Sprintf("tcp:%s:%d", host, port)
 }
 
-func (p *listenPool) Exist(host string, port int) bool {
-	key := p.getKey(host, port)
+func (p *listenPool) UDPKey(host string, port int) string {
+	return fmt.Sprintf("tcp:%s:%d", host, port)
+}
+
+func (p *listenPool) Exist(key string) bool {
 	p.poolMutex.Lock()
 	_, exist := p.pool[key]
 	p.poolMutex.Unlock()
 	return exist
 }
 
-func (p *listenPool) Add(host string, port int, l net.Listener) {
-	key := p.getKey(host, port)
+func (p *listenPool) Add(key string, value *listenTarget) {
 	p.poolMutex.Lock()
-	p.pool[key] = l
+	p.pool[key] = value
 	p.poolMutex.Unlock()
 }
 
-func (p *listenPool) Get(host string, port int) net.Listener {
-	key := p.getKey(host, port)
+func (p *listenPool) Get(key string) *listenTarget {
 	p.poolMutex.Lock()
 	v, exist := p.pool[key]
 	p.poolMutex.Unlock()
@@ -56,10 +91,11 @@ func (p *listenPool) Delete(key string) error {
 	p.poolMutex.Lock()
 	defer p.poolMutex.Unlock()
 
-	_, exist := p.pool[key]
+	v, exist := p.pool[key]
 	if !exist {
 		return errors.New("delete failed: listen port not exist")
 	}
+	v.Close() // FIXME!
 	delete(p.pool, key)
 	logrus.Debugf("delete listen %s from pool success", key)
 	return nil
@@ -68,7 +104,7 @@ func (p *listenPool) Delete(key string) error {
 // Used by the Iter & IterBuffered functions to wrap two variables together over a channel,
 type listenPoolTuple struct {
 	Key string
-	Val net.Listener
+	Val *listenTarget
 }
 
 // Returns a buffered iterator which could be used in a for range loop.

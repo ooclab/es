@@ -83,8 +83,9 @@ func (manager *Manager) TunnelCreate(cfg *TunnelConfig) (*Tunnel, error) {
 }
 
 func (manager *Manager) listenTCP(host string, port int) (net.Listener, error) {
+	key := manager.lpool.TCPKey(host, port)
 
-	if manager.lpool.Exist(host, port) {
+	if manager.lpool.Exist(key) {
 		// the listen address is exist in lpool already
 		logrus.Errorf("start listen for %s:%d failed, it's existed already.", host, port)
 		return nil, errors.New("listen address is existed")
@@ -104,7 +105,7 @@ func (manager *Manager) listenTCP(host string, port int) (net.Listener, error) {
 	}
 
 	// save listen
-	manager.lpool.Add(host, port, l)
+	manager.lpool.Add(key, newTCPListenTarget(host, port, l))
 	return l, nil
 }
 
@@ -146,9 +147,7 @@ func (manager *Manager) runListenTunnel(t *Tunnel) error {
 
 func (manager *Manager) Close() error {
 	for item := range manager.lpool.IterBuffered() {
-		fmt.Println("item = ", item)
-		item.Val.Close()
-		logrus.Debugf("close listen %s", item.Key)
+		fmt.Println("item.Key = ", item.Key)
 		manager.lpool.Delete(item.Key)
 	}
 	return nil

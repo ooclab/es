@@ -65,7 +65,7 @@ func defaultTunnelCreateHandler(manager *tunnel.Manager) session.RequestHandlerF
 			return
 		}
 
-		logrus.Debug("handle got: ", cfg)
+		logrus.Debugf("got config for tunnel create: %s", cfg)
 
 		t, err := manager.TunnelCreate(cfg)
 		if err != nil {

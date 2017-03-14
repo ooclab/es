@@ -9,14 +9,14 @@ import (
 
 type Pool struct {
 	nextID    uint32
-	pool      map[uint32]*Channel
+	pool      map[uint32]Channel
 	poolMutex sync.RWMutex
 }
 
 func NewPool() *Pool {
 	return &Pool{
 		nextID:    1,
-		pool:      map[uint32]*Channel{},
+		pool:      map[uint32]Channel{},
 		poolMutex: sync.RWMutex{},
 	}
 }
@@ -37,7 +37,7 @@ func (p *Pool) Exist(id uint32) bool {
 	return exist
 }
 
-func (p *Pool) Get(id uint32) *Channel {
+func (p *Pool) Get(id uint32) Channel {
 	p.poolMutex.Lock()
 	v, exist := p.pool[id]
 	p.poolMutex.Unlock()
@@ -48,31 +48,31 @@ func (p *Pool) Get(id uint32) *Channel {
 	}
 }
 
-func (p *Pool) Delete(c *Channel) error {
+func (p *Pool) Delete(c Channel) error {
 	p.poolMutex.Lock()
 	defer p.poolMutex.Unlock()
 
-	_, exist := p.pool[c.ChannelID]
+	_, exist := p.pool[c.ID()]
 	if !exist {
 		return errors.New("delete failed: channel not exist")
 	}
-	delete(p.pool, c.ChannelID)
+	delete(p.pool, c.ID())
 	return nil
 }
 
-func (p *Pool) New(tid uint32, outbound chan []byte, conn net.Conn) *Channel {
+func (p *Pool) New(tid uint32, outbound chan []byte, conn net.Conn) Channel {
 	cid := p.newID()
 	return p.NewByID(cid, tid, outbound, conn)
 }
 
-func (p *Pool) NewByID(cid uint32, tid uint32, outbound chan []byte, conn net.Conn) *Channel {
+func (p *Pool) NewByID(cid uint32, tid uint32, outbound chan []byte, conn net.Conn) Channel {
 	p.poolMutex.Lock()
-	c := &Channel{
-		TunnelID:  tid,
-		ChannelID: cid,
-		Outbound:  outbound,
-		Conn:      conn,
-		lock:      &sync.Mutex{},
+	c := &tcpChannel{
+		tid:      tid,
+		cid:      cid,
+		outbound: outbound,
+		conn:     conn,
+		lock:     &sync.Mutex{},
 	}
 	p.pool[cid] = c
 	p.poolMutex.Unlock()

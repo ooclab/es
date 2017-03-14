@@ -10,7 +10,7 @@ import (
 )
 
 func defaultOpenTunnel(sessionManager *session.Manager, tunnelManager *tunnel.Manager) OpenTunnelFunc {
-	return func(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
+	return func(proto string, localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
 		// send open tunnel message to remote endpoint
 		cfg := &tunnel.TunnelConfig{
 			LocalHost:  localHost,
@@ -18,6 +18,7 @@ func defaultOpenTunnel(sessionManager *session.Manager, tunnelManager *tunnel.Ma
 			RemoteHost: remoteHost,
 			RemotePort: remotePort,
 			Reverse:    reverse,
+			Proto:      proto,
 		}
 
 		body, _ := json.Marshal(cfg.RemoteConfig())

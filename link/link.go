@@ -354,6 +354,6 @@ func (l *Link) updateLastRecvTime() {
 }
 
 // OpenTunnel open a tunnel
-func (l *Link) OpenTunnel(localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
-	return l.defaultOpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
+func (l *Link) OpenTunnel(proto string, localHost string, localPort int, remoteHost string, remotePort int, reverse bool) error {
+	return l.defaultOpenTunnel(proto, localHost, localPort, remoteHost, remotePort, reverse)
 }

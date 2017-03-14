@@ -13,6 +13,7 @@ import (
 
 type TunnelConfig struct {
 	ID         uint32
+	Proto      string // TCP or UDP
 	LocalHost  string
 	LocalPort  int
 	RemoteHost string
@@ -27,6 +28,14 @@ func (c *TunnelConfig) RemoteConfig() *TunnelConfig {
 		RemoteHost: c.LocalHost,
 		RemotePort: c.LocalPort,
 		Reverse:    !c.Reverse,
+	}
+}
+
+func (c *TunnelConfig) String() string {
+	if c.Reverse {
+		return fmt.Sprintf("%s: L(%s:%d) <- R(%s:%d)", c.Proto, c.LocalHost, c.LocalPort, c.RemoteHost, c.RemotePort)
+	} else {
+		return fmt.Sprintf("%s: L(%s:%d) -> R(%s:%d)", c.Proto, c.LocalHost, c.LocalPort, c.RemoteHost, c.RemotePort)
 	}
 }
 
@@ -55,30 +64,14 @@ func (t *Tunnel) String() string {
 	return fmt.Sprintf("%d L:%s:%d -> R:%s:%d", t.ID, cfg.LocalHost, cfg.LocalPort, cfg.RemoteHost, cfg.RemotePort)
 }
 
-func (t *Tunnel) HandleIn(m *tcommon.TMSG) error {
+func (t *Tunnel) HandleIn(m *tcommon.TMSG) (err error) {
 	c := t.cpool.Get(m.ChannelID)
 	if t.Config.Reverse {
 		if c == nil {
-			// (reverse tunnel) need to setup a connect to localhost:localport
-			cfg := t.Config
-			addrS := fmt.Sprintf("%s:%d", cfg.LocalHost, cfg.LocalPort)
-			addr, err := net.ResolveTCPAddr("tcp", addrS)
+			c, err = t.openTCPChannel(m)
 			if err != nil {
-				logrus.Warnf("resolve %s failed: %s", addrS, err)
-				// TODO: notice remote endpoint ?
 				return err
 			}
-
-			conn, err := net.DialTCP("tcp", nil, addr)
-			if err != nil {
-				logrus.Errorf("dial %s failed: %s", addrS, err.Error())
-				// TODO: try again ?
-				return err
-			}
-
-			// IMPORTANT! create channel by ID!
-			c = t.cpool.NewByID(m.ChannelID, t.ID, t.outbound, conn)
-			go t.ServeChannel(c)
 			logrus.Debugf("OPEN channel %s success", c)
 		}
 	} else {
@@ -92,7 +85,55 @@ func (t *Tunnel) HandleIn(m *tcommon.TMSG) error {
 	return c.HandleIn(m)
 }
 
-func (t *Tunnel) NewChannelByConn(conn net.Conn) *channel.Channel {
+func (t *Tunnel) openTCPChannel(m *tcommon.TMSG) (channel.Channel, error) {
+	// (reverse tunnel) need to setup a connect to localhost:localport
+	cfg := t.Config
+	addrS := fmt.Sprintf("%s:%d", cfg.LocalHost, cfg.LocalPort)
+	addr, err := net.ResolveTCPAddr("tcp", addrS)
+	if err != nil {
+		logrus.Warnf("resolve %s failed: %s", addrS, err)
+		// TODO: notice remote endpoint ?
+		return nil, err
+	}
+
+	conn, err := net.DialTCP("tcp", nil, addr)
+	if err != nil {
+		logrus.Errorf("dial %s failed: %s", addrS, err.Error())
+		// TODO: try again ?
+		return nil, err
+	}
+
+	// IMPORTANT! create channel by ID!
+	c := t.cpool.NewByID(m.ChannelID, t.ID, t.outbound, conn)
+	go t.ServeChannel(c)
+	return c, nil
+}
+
+func (t *Tunnel) openUDPChannel(m *tcommon.TMSG) (channel.Channel, error) {
+	// (reverse tunnel) need to setup a connect to localhost:localport
+	cfg := t.Config
+	addrS := fmt.Sprintf("%s:%d", cfg.LocalHost, cfg.LocalPort)
+	addr, err := net.ResolveTCPAddr("tcp", addrS)
+	if err != nil {
+		logrus.Warnf("resolve %s failed: %s", addrS, err)
+		// TODO: notice remote endpoint ?
+		return nil, err
+	}
+
+	conn, err := net.DialTCP("tcp", nil, addr)
+	if err != nil {
+		logrus.Errorf("dial %s failed: %s", addrS, err.Error())
+		// TODO: try again ?
+		return nil, err
+	}
+
+	// IMPORTANT! create channel by ID!
+	c := t.cpool.NewByID(m.ChannelID, t.ID, t.outbound, conn)
+	go t.ServeChannel(c)
+	return c, nil
+}
+
+func (t *Tunnel) NewChannelByConn(conn net.Conn) channel.Channel {
 	if t.Config.Reverse {
 		logrus.Errorf("reverse tunnel can not create channel use random ID!")
 		return nil
@@ -100,13 +141,13 @@ func (t *Tunnel) NewChannelByConn(conn net.Conn) *channel.Channel {
 	return t.cpool.New(t.ID, t.outbound, conn)
 }
 
-func (t *Tunnel) ServeChannel(c *channel.Channel) {
+func (t *Tunnel) ServeChannel(c channel.Channel) {
 	if err := c.Serve(); err != nil {
 		if !c.IsClosed() {
-			t.closeRemoteChannel(c.ChannelID)
+			t.closeRemoteChannel(c.ID())
 		}
 	}
-	if t.cpool.Exist(c.ChannelID) {
+	if t.cpool.Exist(c.ID()) {
 		t.cpool.Delete(c)
 	}
 }
