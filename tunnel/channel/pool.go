@@ -56,6 +56,7 @@ func (p *Pool) Delete(c Channel) error {
 	if !exist {
 		return errors.New("delete failed: channel not exist")
 	}
+	c.Close() // FIXME!
 	delete(p.pool, c.ID())
 	return nil
 }
@@ -77,4 +78,31 @@ func (p *Pool) NewByID(cid uint32, tid uint32, outbound chan []byte, conn net.Co
 	p.pool[cid] = c
 	p.poolMutex.Unlock()
 	return c
+}
+
+// Used by the Iter & IterBuffered functions to wrap two variables together over a channel,
+type poolTuple struct {
+	Key uint32
+	Val Channel
+}
+
+// Returns a buffered iterator which could be used in a for range loop.
+func (p *Pool) IterBuffered() <-chan poolTuple {
+	ch := make(chan poolTuple, len(p.pool))
+	go func() {
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		go func() {
+			// Foreach key, value pair.
+			p.poolMutex.Lock()
+			defer p.poolMutex.Unlock()
+			for key, val := range p.pool {
+				ch <- poolTuple{key, val}
+			}
+			wg.Done()
+		}()
+		wg.Wait()
+		close(ch)
+	}()
+	return ch
 }

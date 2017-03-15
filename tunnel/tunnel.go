@@ -76,7 +76,7 @@ func (t *Tunnel) HandleIn(m *tcommon.TMSG) (err error) {
 			if err != nil {
 				return err
 			}
-			logrus.Debugf("OPEN channel %s success", c)
+			logrus.Debugf("HandleIn: OPEN tcp channel %s success", c)
 		}
 	} else {
 		// forward tunnel
@@ -147,7 +147,7 @@ func (t *Tunnel) NewChannelByConn(conn net.Conn) channel.Channel {
 
 func (t *Tunnel) ServeChannel(c channel.Channel) {
 	if err := c.Serve(); err != nil {
-		if !c.IsClosed() {
+		if !c.IsClosedByRemote() {
 			t.closeRemoteChannel(c.ID())
 		}
 	}
@@ -175,8 +175,10 @@ func (t *Tunnel) HandleChannelClose(m *tcommon.TMSG) error {
 		return errors.New("no such channel")
 	}
 
-	t.cpool.Delete(c)
+	// TODO: more clean!
 	c.Close()
+	c.SetClosedByRemote()
+	t.cpool.Delete(c)
 	return nil
 }
 
@@ -239,7 +241,7 @@ func (t *Tunnel) listenTCP() error {
 
 			c := t.NewChannelByConn(conn)
 			go t.ServeChannel(c)
-			logrus.Debugf("OPEN channel %s success", c)
+			logrus.Debugf("listenTCP: OPEN channel %s success", c)
 		}
 	}()
 
@@ -289,7 +291,7 @@ func (t *Tunnel) listenUDP() error {
 
 			c := t.NewChannelByConn(conn)
 			go t.ServeChannel(c)
-			logrus.Debugf("OPEN channel %s success", c)
+			logrus.Debugf("listenUDP: OPEN channel %s success", c)
 		}
 	}()
 

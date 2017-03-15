@@ -26,7 +26,8 @@ type tcpChannel struct {
 	outbound chan []byte
 	conn     net.Conn
 
-	closed bool
+	closed         bool
+	closedByRemote bool // FIXME!
 
 	lock *sync.Mutex
 }
@@ -53,8 +54,16 @@ func (c *tcpChannel) Close() {
 	logrus.Debugf("CLOSE tcp channel %s: recv = %d, send = %d", c, atomic.LoadUint64(&c.recv), atomic.LoadUint64(&c.send))
 }
 
-func (c *tcpChannel) IsClosed() bool {
-	return c.closed
+func (c *tcpChannel) IsClosedByRemote() bool {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.closedByRemote
+}
+
+func (c *tcpChannel) SetClosedByRemote() {
+	c.lock.Lock()
+	c.closedByRemote = true
+	c.lock.Unlock()
 }
 
 func (c *tcpChannel) HandleIn(m *tcommon.TMSG) error {

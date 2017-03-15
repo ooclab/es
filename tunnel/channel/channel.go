@@ -8,7 +8,8 @@ type Channel interface {
 	ID() uint32
 	String() string
 	Close()
-	IsClosed() bool
+	IsClosedByRemote() bool
+	SetClosedByRemote()
 	HandleIn(m *tcommon.TMSG) error
 	Serve() error
 }
