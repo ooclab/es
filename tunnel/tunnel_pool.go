@@ -73,7 +73,7 @@ func (p *Pool) Delete(t *Tunnel) error {
 	return nil
 }
 
-func (p *Pool) New(cfg *TunnelConfig, outbound chan []byte) (*Tunnel, error) {
+func (p *Pool) New(manager *Manager, cfg *TunnelConfig) (*Tunnel, error) {
 	if cfg.ID == 0 {
 		cfg.ID = p.newID()
 	} else {
@@ -84,7 +84,7 @@ func (p *Pool) New(cfg *TunnelConfig, outbound chan []byte) (*Tunnel, error) {
 	}
 
 	p.poolMutex.Lock()
-	t := newTunnel(cfg, outbound)
+	t := newTunnel(manager, cfg)
 	p.pool[cfg.ID] = t
 	p.poolMutex.Unlock()
 

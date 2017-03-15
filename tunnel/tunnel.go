@@ -9,6 +9,7 @@ import (
 	"github.com/ooclab/es"
 	"github.com/ooclab/es/tunnel/channel"
 	tcommon "github.com/ooclab/es/tunnel/common"
+	"github.com/ooclab/es/util"
 )
 
 type TunnelConfig struct {
@@ -23,6 +24,7 @@ type TunnelConfig struct {
 
 func (c *TunnelConfig) RemoteConfig() *TunnelConfig {
 	return &TunnelConfig{
+		Proto:      c.Proto,
 		LocalHost:  c.RemoteHost,
 		LocalPort:  c.RemotePort,
 		RemoteHost: c.LocalHost,
@@ -45,14 +47,16 @@ type Tunnel struct {
 	Config   *TunnelConfig
 	cpool    *channel.Pool
 	outbound chan []byte
+	manager  *Manager
 }
 
-func newTunnel(cfg *TunnelConfig, outbound chan []byte) *Tunnel {
+func newTunnel(manager *Manager, cfg *TunnelConfig) *Tunnel {
 	return &Tunnel{
 		ID:       cfg.ID,
 		Config:   cfg,
 		cpool:    channel.NewPool(),
-		outbound: outbound,
+		outbound: manager.outbound,
+		manager:  manager,
 	}
 }
 
@@ -173,5 +177,122 @@ func (t *Tunnel) HandleChannelClose(m *tcommon.TMSG) error {
 
 	t.cpool.Delete(c)
 	c.Close()
+	return nil
+}
+
+func (t *Tunnel) Listen() error {
+	if t.Config.Reverse {
+		// reverse tunnel can not listen
+		return nil
+	}
+	var err error
+	switch t.Config.Proto {
+	case "tcp":
+		err = t.listenTCP()
+	case "udp":
+		err = t.listenUDP()
+	default:
+		err = errors.New("CAN NOT HAPPEN")
+	}
+	return err
+}
+
+func (t *Tunnel) listenTCP() error {
+	host, port := t.Config.LocalHost, t.Config.LocalPort
+	key := t.manager.lpool.TCPKey(host, port)
+
+	if t.manager.lpool.Exist(key) {
+		// the listen address is exist in lpool already
+		logrus.Errorf("start listen for %s:%d failed, it's existed already.", host, port)
+		return errors.New("listen address is existed")
+	}
+
+	// start listen
+	addr := fmt.Sprintf("%s:%d", host, port)
+	laddr, err := net.ResolveTCPAddr("tcp", addr)
+	if nil != err {
+		logrus.Fatalln(err)
+	}
+	l, err := net.ListenTCP("tcp", laddr)
+	if err != nil {
+		// the listen address is taken by another program
+		logrus.Errorf("start listen on %s failed: %s", addr, err)
+		return err
+	}
+
+	// save listen
+	t.manager.lpool.Add(key, newTCPListenTarget(t, host, port, l))
+
+	go func() {
+		// defer l.Close()
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				if util.TCPisClosedConnError(err) {
+					logrus.Debugf("the listener of %s is closed", t)
+				} else {
+					logrus.Errorf("accept new client failed: %s", err)
+				}
+				break
+			}
+			logrus.Debugf("accept %s", conn.RemoteAddr())
+
+			c := t.NewChannelByConn(conn)
+			go t.ServeChannel(c)
+			logrus.Debugf("OPEN channel %s success", c)
+		}
+	}()
+
+	logrus.Debugf("start listen tunnel %s success", t)
+	return nil
+}
+
+func (t *Tunnel) listenUDP() error {
+	host, port := t.Config.LocalHost, t.Config.LocalPort
+	key := t.manager.lpool.UDPKey(host, port)
+
+	if t.manager.lpool.Exist(key) {
+		// the listen address is exist in lpool already
+		logrus.Errorf("start udp listen for %s:%d failed, it's existed already.", host, port)
+		return errors.New("listen udp address is existed")
+	}
+
+	// start listen
+	addr := fmt.Sprintf("%s:%d", host, port)
+	laddr, err := net.ResolveTCPAddr("tcp", addr)
+	if nil != err {
+		logrus.Fatalln(err)
+	}
+	l, err := net.ListenTCP("tcp", laddr)
+	if err != nil {
+		// the listen address is taken by another program
+		logrus.Errorf("start listen on %s failed: %s", addr, err)
+		return err
+	}
+
+	// save listen
+	t.manager.lpool.Add(key, newTCPListenTarget(t, host, port, l))
+
+	go func() {
+		// defer l.Close()
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				if util.TCPisClosedConnError(err) {
+					logrus.Debugf("the listener of %s is closed", t)
+				} else {
+					logrus.Errorf("accept new client failed: %s", err)
+				}
+				break
+			}
+			logrus.Debugf("accept %s", conn.RemoteAddr())
+
+			c := t.NewChannelByConn(conn)
+			go t.ServeChannel(c)
+			logrus.Debugf("OPEN channel %s success", c)
+		}
+	}()
+
+	logrus.Debugf("start listen tunnel %s success", t)
 	return nil
 }

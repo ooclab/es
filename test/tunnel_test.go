@@ -18,7 +18,7 @@ func setupChannelPing() error {
 	remoteHost := "127.0.0.1"
 	remotePort := 54321
 	reverse := true
-	if err := clientLink.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse); err != nil {
+	if err := clientLink.OpenTunnel("tcp", localHost, localPort, remoteHost, remotePort, reverse); err != nil {
 		logrus.Errorf("OpenTunnel failed: %s", err)
 		return err
 	}

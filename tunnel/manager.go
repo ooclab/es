@@ -2,14 +2,11 @@ package tunnel
 
 import (
 	"errors"
-	"fmt"
-	"net"
 
 	"github.com/Sirupsen/logrus"
 
 	"github.com/ooclab/es/session"
 	tcommon "github.com/ooclab/es/tunnel/common"
-	"github.com/ooclab/es/util"
 )
 
 type Manager struct {
@@ -64,90 +61,24 @@ func (manager *Manager) HandleIn(payload []byte) error {
 
 func (manager *Manager) TunnelCreate(cfg *TunnelConfig) (*Tunnel, error) {
 	logrus.Debugf("prepare to create a tunnel with config %+v", cfg)
-	t, err := manager.pool.New(cfg, manager.outbound)
+	t, err := manager.pool.New(manager, cfg)
 	if err != nil {
 		logrus.Errorf("create new tunnel failed: %s", err)
 		return nil, err
 	}
 
-	if !cfg.Reverse {
-		if err := manager.runListenTunnel(t); err != nil {
-			logrus.Errorf("run forward tunnel failed!")
-			manager.pool.Delete(t)
-			return nil, err
-		}
+	if err := t.Listen(); err != nil {
+		logrus.Errorf("run forward tunnel %s failed: %s", t.String(), err)
+		manager.pool.Delete(t)
+		return nil, err
 	}
 
 	logrus.Debugf("create forward tunnel: %+v", t)
 	return t, nil
 }
 
-func (manager *Manager) listenTCP(host string, port int) (net.Listener, error) {
-	key := manager.lpool.TCPKey(host, port)
-
-	if manager.lpool.Exist(key) {
-		// the listen address is exist in lpool already
-		logrus.Errorf("start listen for %s:%d failed, it's existed already.", host, port)
-		return nil, errors.New("listen address is existed")
-	}
-
-	// start listen
-	addr := fmt.Sprintf("%s:%d", host, port)
-	laddr, err := net.ResolveTCPAddr("tcp", addr)
-	if nil != err {
-		logrus.Fatalln(err)
-	}
-	l, err := net.ListenTCP("tcp", laddr)
-	if err != nil {
-		// the listen address is taken by another program
-		logrus.Errorf("start listen on %s failed: %s", addr, err)
-		return nil, err
-	}
-
-	// save listen
-	manager.lpool.Add(key, newTCPListenTarget(host, port, l))
-	return l, nil
-}
-
-// runListenTunnel the tunnel in listen side
-func (manager *Manager) runListenTunnel(t *Tunnel) error {
-	cfg := t.Config
-	if cfg.Reverse {
-		return errors.New("not forward tunnel")
-	}
-	l, err := manager.listenTCP(cfg.LocalHost, cfg.LocalPort)
-	if err != nil {
-		return err
-	}
-
-	logrus.Debugf("start listen tunnel %s success", t)
-
-	go func() {
-		// defer l.Close()
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				if util.TCPisClosedConnError(err) {
-					logrus.Debugf("the listener of %s is closed", t)
-				} else {
-					logrus.Errorf("accept new client failed: %s", err)
-				}
-				break
-			}
-			logrus.Debugf("accept %s", conn.RemoteAddr())
-
-			c := t.NewChannelByConn(conn)
-			go t.ServeChannel(c)
-			logrus.Debugf("OPEN channel %s success", c)
-		}
-	}()
-
-	return nil
-}
-
 func (manager *Manager) Close() error {
 	for item := range manager.lpool.IterBuffered() {
-		fmt.Println("item.Key = ", item.Key)
 		manager.lpool.Delete(item.Key)
 	}
 	return nil

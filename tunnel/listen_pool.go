@@ -10,28 +10,46 @@ import (
 )
 
 type listenTarget struct {
-	proto string
-	addr  string
-	t     interface{}
+	tunnel *Tunnel
+	proto  string
+	addr   string
+	t      interface{}
+	closed bool
+	m      *sync.Mutex
 }
 
-func newTCPListenTarget(host string, port int, l net.Listener) *listenTarget {
+func newTCPListenTarget(tunnel *Tunnel, host string, port int, l net.Listener) *listenTarget {
 	return &listenTarget{
-		proto: "tcp",
-		addr:  fmt.Sprintf("%s:%d", host, port),
-		t:     l,
+		tunnel: tunnel,
+		proto:  "tcp",
+		addr:   fmt.Sprintf("%s:%d", host, port),
+		t:      l,
+		m:      &sync.Mutex{},
 	}
 }
 
-func newUDPListenTarget(host string, port int, conn *net.UDPConn) *listenTarget {
+func newUDPListenTarget(tunnel *Tunnel, host string, port int, conn *net.UDPConn) *listenTarget {
 	return &listenTarget{
-		proto: "udp",
-		addr:  fmt.Sprintf("%s:%d", host, port),
-		t:     conn,
+		tunnel: tunnel,
+		proto:  "udp",
+		addr:   fmt.Sprintf("%s:%d", host, port),
+		t:      conn,
 	}
 }
 
 func (l *listenTarget) Close() error {
+	// TODO: not use lock
+	l.m.Lock()
+	defer l.m.Unlock()
+
+	if l.closed {
+		return nil
+	}
+
+	defer func() {
+		l.closed = true
+	}()
+
 	switch l.proto {
 	case "tcp":
 		logrus.Debugf("closing tcp listen: %s", l.addr)
