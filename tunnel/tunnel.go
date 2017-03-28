@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/ooclab/es"
@@ -43,21 +44,35 @@ func (c *TunnelConfig) String() string {
 
 // Tunnel define a tunnel struct
 type Tunnel struct {
-	ID       uint32
-	Config   *TunnelConfig
-	cpool    *channel.Pool
-	outbound chan []byte
-	manager  *Manager
+	ID          uint32
+	Config      *TunnelConfig
+	cpool       *channel.Pool
+	outbound    chan []byte
+	manager     *Manager
+	openChannel func(*tcommon.TMSG) (channel.Channel, error)
+	listenFunc  func() error
 }
 
 func newTunnel(manager *Manager, cfg *TunnelConfig) *Tunnel {
-	return &Tunnel{
+	t := &Tunnel{
 		ID:       cfg.ID,
 		Config:   cfg,
 		cpool:    channel.NewPool(),
 		outbound: manager.outbound,
 		manager:  manager,
 	}
+	switch cfg.Proto {
+	case "tcp":
+		t.openChannel = t.openTCPChannel
+		t.listenFunc = t.listenTCP
+	case "udp":
+		t.openChannel = t.openUDPChannel
+		t.listenFunc = t.listenUDP
+	default:
+		logrus.Errorf("can not be here!")
+		return nil
+	}
+	return t
 }
 
 func (t *Tunnel) String() string {
@@ -72,7 +87,7 @@ func (t *Tunnel) HandleIn(m *tcommon.TMSG) (err error) {
 	c := t.cpool.Get(m.ChannelID)
 	if t.Config.Reverse {
 		if c == nil {
-			c, err = t.openTCPChannel(m)
+			c, err = t.openChannel(m)
 			if err != nil {
 				return err
 			}
@@ -187,16 +202,7 @@ func (t *Tunnel) Listen() error {
 		// reverse tunnel can not listen
 		return nil
 	}
-	var err error
-	switch t.Config.Proto {
-	case "tcp":
-		err = t.listenTCP()
-	case "udp":
-		err = t.listenUDP()
-	default:
-		err = errors.New("CAN NOT HAPPEN")
-	}
-	return err
+	return t.listenFunc()
 }
 
 func (t *Tunnel) listenTCP() error {
@@ -261,11 +267,11 @@ func (t *Tunnel) listenUDP() error {
 
 	// start listen
 	addr := fmt.Sprintf("%s:%d", host, port)
-	laddr, err := net.ResolveTCPAddr("tcp", addr)
+	laddr, err := net.ResolveUDPAddr("udp", addr)
 	if nil != err {
 		logrus.Fatalln(err)
 	}
-	l, err := net.ListenTCP("tcp", laddr)
+	conn, err := net.ListenUDP("tcp", laddr)
 	if err != nil {
 		// the listen address is taken by another program
 		logrus.Errorf("start listen on %s failed: %s", addr, err)
@@ -273,25 +279,22 @@ func (t *Tunnel) listenUDP() error {
 	}
 
 	// save listen
-	t.manager.lpool.Add(key, newTCPListenTarget(t, host, port, l))
+	t.manager.lpool.Add(key, newUDPListenTarget(t, host, port, conn))
 
 	go func() {
-		// defer l.Close()
+		buf := make([]byte, 1400) // FIXME!
 		for {
-			conn, err := l.Accept()
+			n, raddr, err := conn.ReadFromUDP(buf)
 			if err != nil {
-				if util.TCPisClosedConnError(err) {
-					logrus.Debugf("the listener of %s is closed", t)
-				} else {
-					logrus.Errorf("accept new client failed: %s", err)
+				// FIXME!
+				if strings.Contains(err.Error(), "use of closed network connection") {
+					logrus.Debugf("conn is closed, quit recv()")
+					return
 				}
-				break
+				logrus.Errorf("ReadFromUDP error: %s", err)
+				return
 			}
-			logrus.Debugf("accept %s", conn.RemoteAddr())
-
-			c := t.NewChannelByConn(conn)
-			go t.ServeChannel(c)
-			logrus.Debugf("listenUDP: OPEN channel %s success", c)
+			fmt.Println("--- n, raddr, err = ", n, raddr, err)
 		}
 	}()
 

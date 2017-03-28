@@ -198,7 +198,8 @@ func (l *Link) exitErr(err error) {
 		l.shutdownErr = err
 	}
 	l.shutdownLock.Unlock()
-	l.Close()
+	// FIXME! don not close now
+	// l.Close()
 }
 
 // Ping is used to measure the RTT response time
