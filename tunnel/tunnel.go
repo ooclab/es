@@ -172,6 +172,12 @@ func (t *Tunnel) ServeChannel(c channel.Channel) {
 }
 
 func (t *Tunnel) closeRemoteChannel(cid uint32) {
+	// FIXME! temp fix "panic: send on closed channel"
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.Warn("t.closeRemoteChannel recovered: ", r)
+		}
+	}()
 	logrus.Debugf("prepare notice remote endpoint to close channel %d", cid)
 	m := &tcommon.TMSG{
 		Type:      tcommon.MsgTypeChannelClose,
