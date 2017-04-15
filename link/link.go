@@ -27,7 +27,8 @@ const (
 	sizeOfLength = 3
 	headerSize   = sizeOfType + sizeOfLength
 
-	defaultInterval = 6 * time.Second // min
+	defaultInterval = 6 * time.Second  // min
+	maxLinkIdle     = 60 * time.Second // TODO: needed ?
 )
 
 // LinkConfig reserved for config
@@ -55,6 +56,7 @@ type Link struct {
 	tunnelManager  *tunnel.Manager
 
 	outbound chan []byte
+	conn     es.Conn
 
 	lastRecvTime      time.Time
 	lastRecvTimeMutex *sync.Mutex
@@ -154,6 +156,14 @@ func (l *Link) Close() error {
 	return nil
 }
 
+func (l *Link) closeConn() error {
+	l.log.WithField("conn", l.conn).Debug("closing underlying conn")
+	if l.conn != nil {
+		return l.conn.Close()
+	}
+	return nil // FIXME!
+}
+
 // Ping is used to measure the RTT response time
 func (l *Link) Ping() (time.Duration, error) {
 	// Get a channel for the ping
@@ -175,7 +185,8 @@ func (l *Link) Ping() (time.Duration, error) {
 	start := time.Now()
 	select {
 	case <-ch:
-		l.log.Debug("keepalive ping")
+		// Compute the RTT
+		return time.Now().Sub(start), nil
 	case <-time.After(l.config.ConnectionWriteTimeout):
 		l.pingLock.Lock()
 		delete(l.pings, id) // Ignore it if a response comes later.
@@ -184,9 +195,6 @@ func (l *Link) Ping() (time.Duration, error) {
 	case <-l.shutdownCh:
 		return 0, ErrLinkShutdown
 	}
-
-	// Compute the RTT
-	return time.Now().Sub(start), nil
 }
 
 // keepalive is a long running goroutine that periodically does
@@ -202,15 +210,22 @@ func (l *Link) keepalive() error {
 		case <-time.After(interval):
 			idle := l.recvIdlenessTime()
 			if idle > l.config.KeepaliveInterval {
-				_, err := l.Ping()
+				interval = defaultInterval
+				rtt, err := l.Ping()
 				if err != nil {
 					l.log.WithFields(logrus.Fields{
 						"error": err,
-					}).Warn("keepalive failed")
-					// return ErrKeepaliveTimeout
-					continue // FIXME! need notice disconnect!
+						"idle":  idle,
+					}).Warn("ping failed")
+					if idle > maxLinkIdle {
+						l.log.WithFields(logrus.Fields{
+							"idle": idle,
+						}).Error("max link idle reach, close the underlying net.Conn")
+						l.closeConn() // notice the underlying loop
+					}
+					continue
 				}
-				interval = defaultInterval
+				l.log.WithField("rtt", rtt).Debug("ping success")
 			} else {
 				interval = l.config.KeepaliveInterval - idle
 			}
@@ -221,12 +236,14 @@ func (l *Link) keepalive() error {
 }
 
 func (l *Link) recv(conn es.Conn, errCh chan error) {
-	l.log.Debug("start handler for link message recv")
+	l.log.Debug("start underlying recv")
 	for {
 		m, err := conn.Recv()
 		if err != nil {
 			if err != io.EOF && !strings.Contains(err.Error(), "closed") && !strings.Contains(err.Error(), "reset by peer") {
-				l.log.Errorf("link %d: Failed to read header: %v", l.ID, err)
+				l.log.WithFields(logrus.Fields{
+					"error": err,
+				}).Error("read failed")
 			}
 			// TODO: nil
 			errCh <- err
@@ -263,6 +280,7 @@ func (l *Link) recv(conn es.Conn, errCh chan error) {
 }
 
 func (l *Link) send(conn es.Conn, errCh chan error) {
+	l.log.Debug("start underlying send")
 	for {
 		select {
 		case m := <-l.outbound:
@@ -273,12 +291,12 @@ func (l *Link) send(conn es.Conn, errCh chan error) {
 			}
 			err := conn.Send(m)
 			if err != nil {
-				l.log.Errorf("write data to conn failed: %s", err)
+				l.log.WithField("error", err).Error("write data to conn failed")
 				errCh <- err
 				return
 			}
 		case <-l.shutdownCh:
-			l.log.Debug("send is stop")
+			l.log.Debug("underlying send is stop")
 			errCh <- nil
 			return
 		}
@@ -286,12 +304,13 @@ func (l *Link) send(conn es.Conn, errCh chan error) {
 }
 
 // Bind bind link with a underlying connection (tcp)
-func (l *Link) Bind(conn es.Conn) error {
+func (l *Link) Bind(conn es.Conn) (chan error, error) {
 	errCh := make(chan error, 1)
+	l.conn = conn
 	go l.recv(conn, errCh)
 	go l.send(conn, errCh)
-	// wait stop
-	return <-errCh
+	l.Ping() // wait success
+	return errCh, nil
 }
 
 // handlePing is invokde for a LinkMsgTypePing frame

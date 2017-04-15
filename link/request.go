@@ -24,7 +24,7 @@ func defaultOpenTunnel(sessionManager *session.Manager, tunnelManager *tunnel.Ma
 		body, _ := json.Marshal(cfg.RemoteConfig())
 		s, err := sessionManager.New()
 		if err != nil {
-			logrus.Errorf("open session failed: %s", err)
+			logrus.WithField("error", err).Error("open session failed")
 			return err
 		}
 
@@ -33,24 +33,24 @@ func defaultOpenTunnel(sessionManager *session.Manager, tunnelManager *tunnel.Ma
 			Body:   body,
 		})
 		if err != nil {
-			logrus.Errorf("send request to remote endpoint failed: %s", err)
+			logrus.WithField("error", err).Error("send request to remote endpoint failed")
 			return err
 		}
 
 		// fmt.Println("resp: ", resp)
 		if resp.Status != "success" {
-			logrus.Errorf("open tunnel in the remote endpoint failed: %+v", resp)
+			logrus.WithField("error", err).Error("open tunnel in the remote endpoint failed")
 			return errors.New("open tunnel in the remote endpoint failed")
 		}
 
 		tcBody := tunnelCreateBody{}
 		if err = json.Unmarshal(resp.Body, &tcBody); err != nil {
-			logrus.Errorf("json unmarshal body failed: %s", err)
+			logrus.WithField("error", err).Error("json unmarshal body failed")
 			return errors.New("json unmarshal body error")
 		}
 
 		// success: open tunnel at local endpoint
-		logrus.Debug("open tunnel in the remote endpoint success")
+		logrus.WithField("config", cfg).Debug("open tunnel in the remote endpoint success")
 
 		cfg.ID = tcBody.ID
 		t, err := tunnelManager.TunnelCreate(cfg)
@@ -60,7 +60,7 @@ func defaultOpenTunnel(sessionManager *session.Manager, tunnelManager *tunnel.Ma
 			return errors.New("open tunnel in the local side failed")
 		}
 
-		logrus.Debugf("open tunnel %s in the local side success", t)
+		logrus.WithField("tunnel", t).Debug("open tunnel in the local side success")
 
 		return nil
 	}
