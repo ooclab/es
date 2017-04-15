@@ -56,8 +56,10 @@ type Link struct {
 	tunnelManager  *tunnel.Manager
 
 	outbound chan []byte
-	conn     es.Conn
-	wg       *sync.WaitGroup
+
+	// for underlying loop control
+	stopCh chan struct{}
+	wg     *sync.WaitGroup
 
 	lastRecvTime      time.Time
 	lastRecvTimeMutex *sync.Mutex
@@ -157,14 +159,6 @@ func (l *Link) Close() error {
 	return nil
 }
 
-func (l *Link) closeConn() error {
-	l.log.WithField("conn", l.conn).Debug("closing underlying conn")
-	if l.conn != nil {
-		return l.conn.Close()
-	}
-	return nil // FIXME!
-}
-
 // Ping is used to measure the RTT response time
 func (l *Link) Ping() (time.Duration, error) {
 	// Get a channel for the ping
@@ -222,7 +216,7 @@ func (l *Link) keepalive() error {
 						l.log.WithFields(logrus.Fields{
 							"idle": idle,
 						}).Error("max link idle reach, close the underlying net.Conn")
-						l.closeConn() // notice the underlying loop
+						close(l.stopCh) // notice the underlying loop
 					}
 					continue
 				}
@@ -290,8 +284,11 @@ func (l *Link) send(conn es.Conn) error {
 				l.log.WithField("error", err).Error("write data to conn failed")
 				return err
 			}
+		case <-l.stopCh:
+			l.log.Debug("got stop event, quit Link.send")
+			return nil
 		case <-l.shutdownCh:
-			l.log.Debug("underlying send is stop")
+			l.log.Debug("got shutdown event, quit Link.send")
 			return nil
 		}
 	}
@@ -299,8 +296,8 @@ func (l *Link) send(conn es.Conn) error {
 
 // Bind bind link with a underlying connection (tcp)
 func (l *Link) Bind(conn es.Conn) error {
-	l.conn = conn
 	l.wg = &sync.WaitGroup{}
+	l.stopCh = make(chan struct{}, 1)
 
 	go func() {
 		l.wg.Add(1)
@@ -308,6 +305,7 @@ func (l *Link) Bind(conn es.Conn) error {
 			l.log.WithField("error", err).Error("Link.recv quit")
 		}
 		// TODO: notice send
+		close(l.stopCh)
 		l.wg.Done()
 	}()
 	go func() {
@@ -316,7 +314,7 @@ func (l *Link) Bind(conn es.Conn) error {
 			l.log.WithField("error", err).Error("Link.send quit")
 		}
 		// TODO: notice recv
-		l.closeConn()
+		conn.Close()
 		l.wg.Done()
 	}()
 
@@ -327,6 +325,7 @@ func (l *Link) Bind(conn es.Conn) error {
 func (l *Link) Wait() {
 	l.wg.Wait()
 	l.wg = nil
+	l.stopCh = nil
 	l.log.Debug("wait completed")
 }
 
