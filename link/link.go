@@ -57,6 +57,7 @@ type Link struct {
 
 	outbound chan []byte
 	conn     es.Conn
+	wg       *sync.WaitGroup
 
 	lastRecvTime      time.Time
 	lastRecvTimeMutex *sync.Mutex
@@ -235,7 +236,7 @@ func (l *Link) keepalive() error {
 	}
 }
 
-func (l *Link) recv(conn es.Conn, errCh chan error) {
+func (l *Link) recv(conn es.Conn) error {
 	l.log.Debug("start underlying recv")
 	for {
 		m, err := conn.Recv()
@@ -246,8 +247,7 @@ func (l *Link) recv(conn es.Conn, errCh chan error) {
 				}).Error("read failed")
 			}
 			// TODO: nil
-			errCh <- err
-			return
+			return err
 		}
 
 		l.updateLastRecvTime()
@@ -265,52 +265,69 @@ func (l *Link) recv(conn es.Conn, errCh chan error) {
 		case es.LinkMsgTypePingResponse:
 			err = l.handlePing(mData)
 		default:
-			l.log.Errorf("unknown message type %d", mType)
+			l.log.WithField("type", mType).Error("unknown message type")
 			// TODO:
-			errCh <- errors.New("unknown message type")
-			return
+			return errors.New("unknown message type")
 		}
 
 		if err != nil {
-			l.log.Errorf("handle link message error: %s", err)
-			errCh <- err
-			return
+			return err
 		}
 	}
 }
 
-func (l *Link) send(conn es.Conn, errCh chan error) {
+func (l *Link) send(conn es.Conn) error {
 	l.log.Debug("start underlying send")
 	for {
 		select {
 		case m := <-l.outbound:
 			// FIXME!
 			if m == nil {
-				errCh <- errors.New("get nil from l.outbound")
-				return
+				return errors.New("get nil from l.outbound")
 			}
 			err := conn.Send(m)
 			if err != nil {
 				l.log.WithField("error", err).Error("write data to conn failed")
-				errCh <- err
-				return
+				return err
 			}
 		case <-l.shutdownCh:
 			l.log.Debug("underlying send is stop")
-			errCh <- nil
-			return
+			return nil
 		}
 	}
 }
 
 // Bind bind link with a underlying connection (tcp)
-func (l *Link) Bind(conn es.Conn) (chan error, error) {
-	errCh := make(chan error, 1)
+func (l *Link) Bind(conn es.Conn) error {
 	l.conn = conn
-	go l.recv(conn, errCh)
-	go l.send(conn, errCh)
-	l.Ping() // wait success
-	return errCh, nil
+	l.wg = &sync.WaitGroup{}
+
+	go func() {
+		l.wg.Add(1)
+		if err := l.recv(conn); err != nil {
+			l.log.WithField("error", err).Error("Link.recv quit")
+		}
+		// TODO: notice send
+		l.wg.Done()
+	}()
+	go func() {
+		l.wg.Add(1)
+		if err := l.send(conn); err != nil {
+			l.log.WithField("error", err).Error("Link.send quit")
+		}
+		// TODO: notice recv
+		l.closeConn()
+		l.wg.Done()
+	}()
+
+	l.Ping() // TODO: wait ping success
+	return nil
+}
+
+func (l *Link) Wait() {
+	l.wg.Wait()
+	l.wg = nil
+	l.log.Debug("wait completed")
 }
 
 // handlePing is invokde for a LinkMsgTypePing frame
