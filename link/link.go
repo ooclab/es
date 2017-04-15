@@ -16,48 +16,27 @@ import (
 
 // Define error
 var (
-	ErrEventChannelIsFull = errors.New("event channel is full")
-	ErrLinkShutdown       = errors.New("link is shutdown")
-	ErrTimeout            = errors.New("timeout")
-	ErrKeepAliveTimeout   = errors.New("keepalive error")
-	ErrMsgPingInvalid     = errors.New("invalid ping message")
+	ErrLinkShutdown     = errors.New("link is shutdown")
+	ErrTimeout          = errors.New("timeout")
+	ErrKeepaliveTimeout = errors.New("keepalive error")
+	ErrMsgPingInvalid   = errors.New("invalid ping message")
 )
 
 const (
 	sizeOfType   = 1
 	sizeOfLength = 3
 	headerSize   = sizeOfType + sizeOfLength
+
+	defaultInterval = 6 * time.Second // min
 )
-
-type linkMSGHeader struct {
-	Type   uint8
-	Length uint32
-}
-
-type linkMSG struct {
-	Header linkMSGHeader
-	Body   io.Reader
-}
-
-// LinkEvent the event struct of link
-type LinkEvent struct {
-	Link    *Link
-	Name    string
-	Data    interface{}
-	Created time.Time
-}
 
 // LinkConfig reserved for config
 type LinkConfig struct {
 	// ID need to be started differently
 	IsServerSide bool
 
-	// EnableKeepalive is used to do a period keep alive
-	// messages using a ping.
-	EnableKeepAlive bool
-
-	// KeepAliveInterval is how often to perform the keep alive
-	KeepAliveInterval time.Duration
+	// KeepaliveInterval is how often to perform the keep alive
+	KeepaliveInterval time.Duration
 
 	// ConnectionWriteTimeout is meant to be a "safety valve" timeout after
 	// we which will suspect a problem with the underlying connection and
@@ -66,39 +45,25 @@ type LinkConfig struct {
 	ConnectionWriteTimeout time.Duration
 }
 
-// Link master connection between two point
+// Link is the main connection between two endpoint
 type Link struct {
 	ID     uint32
 	config *LinkConfig
+	log    *logrus.Entry
 
 	sessionManager *session.Manager
 	tunnelManager  *tunnel.Manager
 
-	// bufRead:    bufio.NewReader(conn)
-	// recvBuf = bytes.NewBuffer(make([]byte, 0, length))
-	outbound         chan []byte
-	connDisconnected chan bool
+	outbound chan []byte
 
 	lastRecvTime      time.Time
 	lastRecvTimeMutex *sync.Mutex
-	heartbeatInterval int
-
-	Event chan *LinkEvent
-
-	offline            bool
-	offlineDetectRelay int
-	offlineTime        time.Time
-	closed             bool
-	quit               chan bool
 
 	// pings is used to track inflight pings
 	pings    map[uint32]chan struct{}
 	pingID   uint32
 	pingLock sync.Mutex
 
-	// shutdown is used to safely close a link
-	shutdown     bool
-	shutdownErr  error
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
@@ -116,25 +81,28 @@ func NewLinkCustom(config *LinkConfig, hdr session.RequestHandler) *Link {
 }
 
 func newLink(config *LinkConfig, hdr session.RequestHandler) *Link {
+	logrus.Debugf("prepare to create new link with config %#v", config)
 	if config == nil {
-		config = &LinkConfig{
-			EnableKeepAlive:        true,
-			KeepAliveInterval:      30 * time.Second,
-			ConnectionWriteTimeout: 10 * time.Second,
-		}
+		config = &LinkConfig{}
+	}
+	if config.KeepaliveInterval == 0 {
+		config.KeepaliveInterval = 30 * time.Second
+	}
+	if config.ConnectionWriteTimeout == 0 {
+		config.ConnectionWriteTimeout = 10 * time.Second
 	}
 	l := &Link{
-		config:             config,
-		outbound:           make(chan []byte, 1),
-		heartbeatInterval:  15,
-		offlineDetectRelay: 60,
-		lastRecvTimeMutex:  &sync.Mutex{},
-		lastRecvTime:       time.Now(), // FIXME: init time to prevent SetOffline triggered when program started
-		quit:               make(chan bool, 1),
+		config:            config,
+		outbound:          make(chan []byte, 1),
+		lastRecvTimeMutex: &sync.Mutex{},
 
 		pings:      make(map[uint32]chan struct{}),
 		shutdownCh: make(chan struct{}),
 	}
+	l.log = logrus.WithFields(logrus.Fields{
+		"from": "link",
+		"id":   l.ID,
+	})
 	l.sessionManager = session.NewManager(config.IsServerSide, l.outbound)
 	l.tunnelManager = tunnel.NewManager(config.IsServerSide, l.outbound, l.sessionManager)
 	if hdr == nil {
@@ -145,9 +113,16 @@ func newLink(config *LinkConfig, hdr session.RequestHandler) *Link {
 	l.sessionManager.SetRequestHandler(hdr)
 	// TODO: custom defaultOpenTunnel func
 	l.defaultOpenTunnel = defaultOpenTunnel(l.sessionManager, l.tunnelManager)
-	if config.EnableKeepAlive {
-		go l.keepalive()
-	}
+
+	// run keepalive
+	go func() {
+		if err := l.keepalive(); err != nil {
+			l.log.Errorf("link %d: keepalive failed: %s", l.ID, err)
+		}
+		l.log.Debugf("link %d: stop keepalive", l.ID)
+	}()
+
+	l.log.Debug("create link success")
 	return l
 }
 
@@ -161,45 +136,22 @@ func (l *Link) IsClosed() bool {
 	}
 }
 
-func (l *Link) closeOutbound() {
-	defer func() {
-		if r := recover(); r != nil {
-			logrus.Warn("closeOutbound recovered: ", r)
-		}
-	}()
-	close(l.outbound)
-}
-
 // Close is used to close the link
 func (l *Link) Close() error {
-	l.shutdownLock.Lock()
-	defer l.shutdownLock.Unlock()
-
-	if l.shutdown {
+	if l.IsClosed() {
+		l.log.Warn("link is closed already")
 		return nil
 	}
-	l.shutdown = true
-	if l.shutdownErr == nil {
-		l.shutdownErr = ErrLinkShutdown
-	}
+
+	l.shutdownLock.Lock()
 	close(l.shutdownCh)
-	l.closeOutbound()
+	l.shutdownLock.Unlock()
+
+	close(l.outbound)
 	// TODO: close sessions & tunnles
 	l.tunnelManager.Close()
 	l.sessionManager.Close()
 	return nil
-}
-
-// exitErr is used to handle an error that is causing the
-// link to terminate.
-func (l *Link) exitErr(err error) {
-	l.shutdownLock.Lock()
-	if l.shutdownErr == nil {
-		l.shutdownErr = err
-	}
-	l.shutdownLock.Unlock()
-	// FIXME! don not close now
-	// l.Close()
 }
 
 // Ping is used to measure the RTT response time
@@ -238,29 +190,42 @@ func (l *Link) Ping() (time.Duration, error) {
 
 // keepalive is a long running goroutine that periodically does
 // a ping to keep the connection alive.
-func (l *Link) keepalive() {
+func (l *Link) keepalive() error {
+	l.log.WithFields(logrus.Fields{
+		"interval":    l.config.KeepaliveInterval,
+		"max_timeout": l.config.ConnectionWriteTimeout,
+	}).Debug("start keepalive")
+	interval := defaultInterval
 	for {
 		select {
-		case <-time.After(l.config.KeepAliveInterval):
-			_, err := l.Ping()
-			if err != nil {
-				logrus.Printf("link %d: keepalive failed: %v", l.ID, err)
-				l.exitErr(ErrKeepAliveTimeout)
-				return
+		case <-time.After(interval):
+			idle := l.recvIdlenessTime()
+			if idle > l.config.KeepaliveInterval {
+				l.log.Debug("start keepalive ping")
+				_, err := l.Ping()
+				if err != nil {
+					l.log.WithFields(logrus.Fields{
+						"error": err,
+					}).Debug("keepalive failed")
+					return ErrKeepaliveTimeout
+				}
+				interval = defaultInterval
+			} else {
+				interval = l.config.KeepaliveInterval - idle
 			}
 		case <-l.shutdownCh:
-			return
+			return nil
 		}
 	}
 }
 
 func (l *Link) recv(conn es.Conn, errCh chan error) {
-	logrus.Debug("start handler for link message recv")
+	l.log.Debug("start handler for link message recv")
 	for {
 		m, err := conn.Recv()
 		if err != nil {
 			if err != io.EOF && !strings.Contains(err.Error(), "closed") && !strings.Contains(err.Error(), "reset by peer") {
-				logrus.Errorf("link %d: Failed to read header: %v", l.ID, err)
+				l.log.Errorf("link %d: Failed to read header: %v", l.ID, err)
 			}
 			// TODO: nil
 			errCh <- err
@@ -282,14 +247,14 @@ func (l *Link) recv(conn es.Conn, errCh chan error) {
 		case es.LinkMsgTypePingResponse:
 			err = l.handlePing(mData)
 		default:
-			logrus.Errorf("link %d: unknown message type %d", l.ID, mType)
+			l.log.Errorf("unknown message type %d", mType)
 			// TODO:
 			errCh <- errors.New("unknown message type")
 			return
 		}
 
 		if err != nil {
-			logrus.Errorf("link %d: handle link message error: %s", l.ID, err)
+			l.log.Errorf("handle link message error: %s", err)
 			errCh <- err
 			return
 		}
@@ -307,12 +272,12 @@ func (l *Link) send(conn es.Conn, errCh chan error) {
 			}
 			err := conn.Send(m)
 			if err != nil {
-				logrus.Errorf("link %d: write data to conn failed: %s", l.ID, err)
+				l.log.Errorf("write data to conn failed: %s", err)
 				errCh <- err
 				return
 			}
 		case <-l.shutdownCh:
-			logrus.Debugf("link %d: send is stop", l.ID)
+			l.log.Debug("send is stop")
 			errCh <- nil
 			return
 		}
@@ -350,8 +315,15 @@ func (l *Link) NewSession() (*session.Session, error) {
 
 func (l *Link) updateLastRecvTime() {
 	l.lastRecvTimeMutex.Lock()
-	defer l.lastRecvTimeMutex.Unlock()
 	l.lastRecvTime = time.Now()
+	l.lastRecvTimeMutex.Unlock()
+}
+
+func (l *Link) recvIdlenessTime() time.Duration {
+	l.lastRecvTimeMutex.Lock()
+	d := time.Since(l.lastRecvTime)
+	l.lastRecvTimeMutex.Unlock()
+	return d
 }
 
 // OpenTunnel open a tunnel

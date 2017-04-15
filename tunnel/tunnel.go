@@ -175,7 +175,7 @@ func (t *Tunnel) closeRemoteChannel(cid uint32) {
 	// FIXME! temp fix "panic: send on closed channel"
 	defer func() {
 		if r := recover(); r != nil {
-			logrus.Warn("t.closeRemoteChannel recovered: ", r)
+			logrus.Error("t.closeRemoteChannel recovered: ", r)
 		}
 	}()
 	logrus.Debugf("prepare notice remote endpoint to close channel %d", cid)
@@ -249,7 +249,7 @@ func (t *Tunnel) listenTCP() error {
 				}
 				break
 			}
-			logrus.Debugf("accept %s", conn.RemoteAddr())
+			logrus.Debugf("tunnel %s accept new client %s", t.String(), conn.RemoteAddr())
 
 			c := t.NewChannelByConn(conn)
 			go t.ServeChannel(c)
