@@ -175,6 +175,7 @@ func (l *Link) Ping() (time.Duration, error) {
 	start := time.Now()
 	select {
 	case <-ch:
+		l.log.Debug("keepalive ping")
 	case <-time.After(l.config.ConnectionWriteTimeout):
 		l.pingLock.Lock()
 		delete(l.pings, id) // Ignore it if a response comes later.
@@ -201,13 +202,13 @@ func (l *Link) keepalive() error {
 		case <-time.After(interval):
 			idle := l.recvIdlenessTime()
 			if idle > l.config.KeepaliveInterval {
-				l.log.Debug("start keepalive ping")
 				_, err := l.Ping()
 				if err != nil {
 					l.log.WithFields(logrus.Fields{
 						"error": err,
-					}).Debug("keepalive failed")
-					return ErrKeepaliveTimeout
+					}).Warn("keepalive failed")
+					// return ErrKeepaliveTimeout
+					continue // FIXME! need notice disconnect!
 				}
 				interval = defaultInterval
 			} else {
