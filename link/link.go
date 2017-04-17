@@ -58,8 +58,9 @@ type Link struct {
 	outbound chan []byte
 
 	// for underlying loop control
-	stopCh chan struct{}
-	wg     *sync.WaitGroup
+	stopCh   chan struct{}
+	stopLock sync.Mutex
+	wg       *sync.WaitGroup
 
 	lastRecvTime      time.Time
 	lastRecvTimeMutex *sync.Mutex
@@ -159,6 +160,30 @@ func (l *Link) Close() error {
 	return nil
 }
 
+// IsStopped does a safe check to see if we have shutdown
+func (l *Link) IsStopped() bool {
+	select {
+	case <-l.stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// Stop close the current transaction underlying conn
+func (l *Link) Stop() error {
+	if l.IsStopped() {
+		l.log.Warn("link is stopped already")
+		return nil
+	}
+
+	l.stopLock.Lock()
+	close(l.stopCh)
+	l.stopLock.Unlock()
+
+	return nil
+}
+
 // Ping is used to measure the RTT response time
 func (l *Link) Ping() (time.Duration, error) {
 	// Get a channel for the ping
@@ -216,7 +241,7 @@ func (l *Link) keepalive() error {
 						l.log.WithFields(logrus.Fields{
 							"idle": idle,
 						}).Error("max link idle reach, close the underlying net.Conn")
-						close(l.stopCh) // notice the underlying loop
+						l.Stop() // notice the underlying loop
 					}
 					continue
 				}
@@ -305,7 +330,7 @@ func (l *Link) Bind(conn es.Conn) error {
 			l.log.WithField("error", err).Error("Link.recv quit")
 		}
 		// TODO: notice send
-		close(l.stopCh)
+		l.Stop()
 		l.wg.Done()
 	}()
 	go func() {
@@ -325,6 +350,7 @@ func (l *Link) Bind(conn es.Conn) error {
 func (l *Link) Wait() {
 	l.wg.Wait()
 	l.wg = nil
+	l.Stop()
 	l.stopCh = nil
 	l.log.Debug("wait completed")
 }
