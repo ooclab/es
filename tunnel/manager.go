@@ -3,7 +3,7 @@ package tunnel
 import (
 	"errors"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 
 	"github.com/ooclab/es/session"
 	tcommon "github.com/ooclab/es/tunnel/common"
