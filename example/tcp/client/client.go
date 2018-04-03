@@ -37,11 +37,11 @@ func main() {
 		// remoteHost := "127.0.0.1"
 		// remotePort := 3000
 		// reverse := false
-		localHost, localPort, remoteHost, remotePort, reverse, err := parseTunnel(os.Args[2])
+		proto, localHost, localPort, remoteHost, remotePort, reverse, err := parseTunnel(os.Args[2])
 		if err != nil {
 			panic(err)
 		}
-		l.OpenTunnel(localHost, localPort, remoteHost, remotePort, reverse)
+		l.OpenTunnel(proto, localHost, localPort, remoteHost, remotePort, reverse)
 	}()
 
 	ec := es.NewBaseConn(conn)
@@ -49,7 +49,7 @@ func main() {
 	l.Close()
 }
 
-func parseTunnel(value string) (localHost string, localPort int, remoteHost string, remotePort int, reverse bool, err error) {
+func parseTunnel(value string) (proto string, localHost string, localPort int, remoteHost string, remotePort int, reverse bool, err error) {
 	L := strings.Split(value, ":")
 	if len(L) != 5 {
 		fmt.Println("tunnel format: \"r|f:local_host:local_port:remote_host:remote_port\"")
@@ -66,6 +66,15 @@ func parseTunnel(value string) (localHost string, localPort int, remoteHost stri
 		reverse = false
 	default:
 		err = errors.New("wrong tunnel map")
+		return
+	}
+
+	proto = strings.TrimSpace(strings.ToLower(L[1]))
+	if proto == "" {
+		proto = "tcp"
+	}
+	if !(proto == "tcp" || proto == "udp") {
+		err = errors.New("unknown protocol")
 		return
 	}
 	localPort, err = strconv.Atoi(L[2])
