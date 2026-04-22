@@ -51,7 +51,7 @@ func getServerAndClient() (serverLink *link.Link, clientLink *link.Link, err err
 				}
 				l.Wait()
 				if err := l.Close(); err != nil {
-					logrus.Errorf("link quit: ", err)
+					logrus.Errorf("link quit: %v", err)
 				}
 			}()
 		}
@@ -91,7 +91,7 @@ func connectServer(addr string) *link.Link {
 	// FIXME: quit it not a good choice for testcase!
 	go func() {
 		if err := l.Bind(ec); err != nil {
-			logrus.Errorf("link quit: ", err)
+			logrus.Errorf("link quit: %v", err)
 		}
 		l.Wait()
 		l.Close()
