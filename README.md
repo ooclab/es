@@ -22,3 +22,8 @@ simple message flow in one order
 
 - [Simple Example](./example)
 - [otunnel](https://github.com/ooclab/otunnel)
+
+## CI
+
+GitHub Actions workflow: `.github/workflows/ci.yml`.
+It validates module metadata and runs `go build ./...` plus `go test ./...` on push/PR.
