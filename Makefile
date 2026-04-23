@@ -2,16 +2,16 @@ GOFMT_FILES?=$$(find . -name '*.go' | grep -v vendor)
 VETARGS?=-all
 TEST?=$$(go list ./... |grep -v 'vendor')
 
+.PHONY: all build test testacc vet fmt fmtcheck
+
 
 all: build test
 
 build: fmt
-	go build
+	go build ./...
 
 test: fmtcheck
-	go test -i $(TEST) || exit 1
-	echo $(TEST) | \
-		xargs -t -n4 go test $(TESTARGS) -timeout=30s -parallel=4
+	go test $(TEST) $(TESTARGS) -timeout=30s -parallel=4
 
 testacc: fmtcheck
 	TF_ACC=1 go test $(TEST) -v $(TESTARGS) -timeout 120m
