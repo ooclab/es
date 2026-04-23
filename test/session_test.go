@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 
 	"github.com/ooclab/es/session"
 )

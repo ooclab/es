@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 )
 
 const (

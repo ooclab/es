@@ -7,7 +7,7 @@ import (
 
 	"github.com/ooclab/es"
 	"github.com/ooclab/es/link"
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 )
 
 func main() {

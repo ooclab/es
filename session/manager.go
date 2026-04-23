@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/ooclab/es"
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 )
 
 type Manager struct {

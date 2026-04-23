@@ -3,7 +3,7 @@ package test
 import (
 	"testing"
 
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 )
 
 func init() {

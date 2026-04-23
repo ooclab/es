@@ -7,8 +7,8 @@ import (
 	"net"
 	"os"
 
+	logrus "github.com/ooclab/es/logger"
 	"github.com/ooclab/es/proto/udp"
-	"github.com/sirupsen/logrus"
 )
 
 func init() {

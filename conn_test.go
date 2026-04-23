@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/ooclab/es/ecrypt"
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 )
 
 func testEcho(conn Conn) error {
