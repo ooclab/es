@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/ooclab/es"
+	logrus "github.com/ooclab/es/logger"
 	"github.com/ooclab/es/session"
 	"github.com/ooclab/es/tunnel"
-	"github.com/sirupsen/logrus"
 )
 
 // Define error

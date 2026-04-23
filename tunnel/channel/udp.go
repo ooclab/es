@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/ooclab/es"
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 
 	tcommon "github.com/ooclab/es/tunnel/common"
 )

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 
+	logrus "github.com/ooclab/es/logger"
 	"github.com/ooclab/es/session"
 	"github.com/ooclab/es/tunnel"
-	"github.com/sirupsen/logrus"
 )
 
 func defaultOpenTunnel(sessionManager *session.Manager, tunnelManager *tunnel.Manager) OpenTunnelFunc {

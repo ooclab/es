@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 
 	"github.com/ooclab/es"
 	"github.com/ooclab/es/link"

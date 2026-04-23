@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 )
 
 type Pool struct {

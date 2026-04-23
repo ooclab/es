@@ -3,9 +3,9 @@ package link
 import (
 	"encoding/json"
 
+	logrus "github.com/ooclab/es/logger"
 	"github.com/ooclab/es/session"
 	"github.com/ooclab/es/tunnel"
-	"github.com/sirupsen/logrus"
 )
 
 type requestHandler struct {

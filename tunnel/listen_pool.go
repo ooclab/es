@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/sirupsen/logrus"
+	logrus "github.com/ooclab/es/logger"
 )
 
 type listenTarget struct {
